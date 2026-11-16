@@ -1,0 +1,10 @@
+{
+  "FileVersion": 3,
+  "EngineAssociation": "5.8",
+  "Category": "Games",
+  "Description": "Night Shift - a PC club management game",
+  "Plugins": [
+    { "Name": "ModelingToolsEditorMode", "Enabled": false },
+    { "Name": "PythonScriptPlugin", "Enabled": true, "TargetAllowList": ["Editor"] }
+  ]
+}

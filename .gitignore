@@ -1,0 +1,15 @@
+/Binaries/
+/DerivedDataCache/
+/Intermediate/
+/Saved/
+/Content/__Build/
+/Content/Developers/
+/.vs/
+/.idea/
+/.vscode/
+*.sln
+*.suo
+*.VC.db
+__pycache__/
+Plugins/**/Binaries/
+Plugins/**/Intermediate/
