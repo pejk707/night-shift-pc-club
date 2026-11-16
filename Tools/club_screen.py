@@ -1,6 +1,9 @@
 """Build the Blueprint HUD and top-down club floor plan."""
 
-from club_rules import BROKEN, CRASH, DURATION, ENERGY, FOOD, FREE, PLAYING
+from club_rules import (
+    BROKEN, CRASH, DURATION, ENERGY, FREE, FRIDGE, KITCHEN, LINE_SIZE, MAX_UPGRADE_LEVEL,
+    NERVOUS, PLAYING, RECEPTION, SERVER, STOCK, SUPPLIES_NIGHT, UPGRADES, value_at_level, wallet,
+)
 
 
 def rgb(hexadecimal, alpha=1):
@@ -105,20 +108,22 @@ def desk_card(g):
     patience = g.arr("Patience", index)
     tilting = g.both(request, g.lt(patience, 30))
     label = words(g, is_drink, "Энергетик", "Перекус")
-    for cond, title in ((is_broken, "Мышь сломана"), (is_crash, "Игра вылетела"), (is_playing, "Играет"), (is_free, "Свободен"), (g.negate(enabled), "Закрыт")):
+    for cond, title in ((is_broken, "Мышь сломана"), (is_crash, "Игра вылетела"), (is_playing, "Играет"), (is_free, "Свободен"), (g.negate(enabled), "Пока недоступен")):
         label = words(g, cond, title, label)
     tint = color_when(g, g.either(tilting, is_broken), PINK,
                       color_when(g, request, AMBER, color_when(g, is_playing, TEAL, MUTED)))
-    panel(g, x, y, 137, 113, g.eq(g.get("Focus"), index))
+    panel(g, x, y, 137, 113, g.both(enabled, g.eq(g.get("Focus"), index)))
     rect(g, offset(g, x, 11), offset(g, y, 11), 34, 22, INSET)
     rect(g, offset(g, x, 14), offset(g, y, 14), 28, 15, tint)
     rect(g, offset(g, x, 25), offset(g, y, 32), 6, 5, INSET)
     text(g, g.append("ПК ", g.string(g.add(index, 1))), offset(g, x, 53), offset(g, y, 14), 1.04)
-    text(g, label, offset(g, x, 11), offset(g, y, 47), 0.94, tint)
+    text(g, label, offset(g, x, 11), offset(g, y, 47), 0.85, tint)
     mood = words(g, g.eq(g.arr("Temper", index), 1), "нервный", "спокойный")
     mood = words(g, tilting, "ТИЛЬТ", mood)
     show_mood = g.both(enabled, g.both(g.negate(is_free), g.negate(is_broken)))
-    text(g, words(g, show_mood, mood, ""), offset(g, x, 11), offset(g, y, 68), 0.79, MUTED)
+    opens = words(g, g.eq(index, 6), "Со 2-й смены", "С 3-й смены")
+    detail = words(g, enabled, words(g, show_mood, mood, ""), opens)
+    text(g, detail, offset(g, x, 11), offset(g, y, 68), 0.79, MUTED)
     rect(g, offset(g, x, 11), offset(g, y, 96), 115, 4, RAIL)
     width = g.mul(as_real(g, g.choose(request, patience, 0)), 1.15, True)
     rect(g, offset(g, x, 11), offset(g, y, 96), width, 4, tint)
@@ -136,32 +141,46 @@ def station_right(g):
     index, y = g.get("Station"), g.get("Top")
     panel(g, 848, y, 114, 81, g.eq(g.get("Focus"), index))
     text(g, g.get("Title"), 858, offset(g, y, 14), 0.93)
-    text(g, g.get("Status"), 858, offset(g, y, 39), 0.84, g.get("Tint"))
+    text(g, g.get("Status"), 858, offset(g, y, 39), 0.75, g.get("Tint"))
 
 
-def queue_label(g, member, selection):
-    left = g.get(member)
-    selected = g.eq(g.get("Guest"), selection)
-    timer = g.append(g.string(g.div(g.add(left, 9), 10)), " сек.")
-    status = g.append(words(g, selected, "Выбран · ", "Ждёт · "), timer)
-    return words(g, g.gt(left, 0), status, "Очередь пуста")
+def draw_queue(g):
+    panel(g, 44, 189, 146, 142, g.eq(g.get("Focus"), RECEPTION))
+    rect(g, 54, 260, 126, 1, RAIL)
+    for slot in range(LINE_SIZE):
+        y = 203 + slot * 69
+        mood = g.arr("LineMood", slot)
+        present = g.gt(mood, 0)
+        nervous = g.eq(mood, NERVOUS)
+        title = words(g, nervous, "Нервный", "Спокойный")
+        label = words(g, present, title, "Очередь пуста" if slot == 0 else "")
+        color = color_when(g, present, color_when(g, nervous, VIOLET, TEAL), MUTED)
+        text(g, label, 54, y, 0.94, color)
+        seconds = g.string(g.div(g.add(g.arr("LineWait", slot), 9), 10))
+        action = words(g, g.gt(g.get("Guest"), 0), "Выбран", "E — позвать") if slot == 0 else "Ждёт"
+        text(g, words(g, present, g.append(action, " · ", seconds, " с"), ""), 54, y + 25, 0.82, MUTED)
 
 
 def floor_objects(g):
     for desk in range(8):
         g.call("DrawDesk", Desk=desk, Left=244.0 + 146.0 * (desk % 4), Top=187.0 + 190.0 * (desk // 4))
+    g.call("DrawQueue")
+    supplies_open = g.negate(g.lt(g.get("ShiftNo"), SUPPLIES_NIGHT))
     for index, top, title, status, tint in (
-        (10, 189.0, "Спокойный гость", queue_label(g, "WaitCalm", 1), TEAL),
-        (11, 266.0, "Нервный гость", queue_label(g, "WaitNervous", 2), VIOLET),
-        (12, 357.0, "Холодильник", "Энергетики", BLUE),
-        (13, 445.0, "Склад", "Запасные мыши", VIOLET),
+        (FRIDGE, 357.0, "Холодильник", "Энергетики", BLUE),
+        (STOCK, 445.0, "Склад · мыши", words(g, supplies_open, "Запасные мыши", "Пока недоступно"),
+         color_when(g, supplies_open, VIOLET, MUTED)),
     ):
         g.call("DrawStation", Station=index, Left=44.0, Top=top, Title=title, Status=status, Tint=tint)
     off = g.gt(g.get("ServerDown"), 0)
-    g.call("DrawRight", Station=14, Top=187.0, Title="Сервер", Status=words(g, off, "Оффлайн", "В сети"),
+    g.call("DrawRight", Station=SERVER, Top=187.0, Title="Сервер", Status=words(g, off, "Оффлайн", "В сети"),
            Tint=color_when(g, off, PINK, TEAL))
-    g.call("DrawRight", Station=15, Top=400.0, Title="Снэк-бар",
-           Status=words(g, g.eq(g.get("ShiftNo"), 1), "Закрыт", "Перекус"), Tint=AMBER)
+    g.call("DrawRight", Station=KITCHEN, Top=400.0, Title="Снэк-бар",
+           Status=words(g, supplies_open, "Перекус", "Пока недоступно"),
+           Tint=color_when(g, supplies_open, AMBER, MUTED))
+    unlock = words(g, supplies_open, "", "Со 2-й смены")
+    text(g, unlock, 54, 514, 0.78, MUTED)
+    text(g, unlock, 858, 464, 0.78, MUTED)
 
 
 def draw_player(g):
@@ -172,7 +191,8 @@ def draw_player(g):
     item = g.get("HeldItem")
     cargo = words(g, g.eq(item, 1), "Энергетик", words(g, g.eq(item, 2), "Мышь", words(g, g.eq(item, 3), "Перекус", "Пусто")))
     text(g, g.append("Предмет  /  ", cargo), 29, 572, 1.09, TEAL)
-    text(g, "WASD  идти     E  взаимодействовать / удерживать     F  успокоить     Q  освободить руки", 275, 574, 0.9, WHITE)
+    text(g, "WASD  идти     E  действие / удерживать     F  успокоить     Q  отменить", 275, 574, 0.9, WHITE)
+    text(g, "U  улучшения", 849, 574, 1.0, TEAL)
     limit = g.call("InteractDuration", result="Value")
     g.guard(g.gt(g.get("HoldTime"), 0.0, True))
     g.guard(g.gt(limit, 0.0, True))
@@ -204,6 +224,38 @@ def overlay(g):
     text(g, g.append("ENTER   ", prompt), 249, 421, 1.25, TEAL)
 
 
+def draw_shop(g):
+    rect(g, 30, 105, 940, 446, OVERLAY)
+    panel(g, 137, 118, 726, 420)
+    rect(g, 137, 118, 726, 4, TEAL)
+    text(g, "Улучшения клуба", 164, 138, 1.8)
+    balance = wallet(g)
+    text(g, g.append("В кассе ", g.string(balance)), 629, 143, 1.06, TEAL)
+    text(g, "1–5   Купить следующий уровень", 164, 173, 0.9, MUTED)
+    rect(g, 164, 194, 672, 1, RAIL)
+    for index, upgrade in enumerate(UPGRADES, start=1):
+        y = 204 + (index - 1) * 57
+        level = g.get(upgrade.member)
+        maxed = g.eq(level, MAX_UPGRADE_LEVEL)
+        price = value_at_level(g, level, upgrade.prices)
+        affordable = g.negate(g.lt(balance, price))
+        current_effect = value_at_level(g, level, upgrade.values)
+        next_effect = value_at_level(g, g.add(level, 1), upgrade.values)
+        change = words(g, maxed, "", g.append(" → ", g.string(next_effect), upgrade.unit))
+        cost = g.append("Цена ", g.string(price))
+        shortage = g.append(" · не хватает ", g.string(g.sub(price, balance)))
+        status = words(g, maxed, "Максимум", g.append(cost, words(g, affordable, "", shortage)))
+        text(g, f"{index}   {upgrade.title}", 164, y, 1.1)
+        text(g, g.append(upgrade.effect, " · ", g.string(current_effect), upgrade.unit, change),
+             164, y + 24, 0.86, MUTED)
+        text(g, g.append("Уровень ", g.string(level), f" / {MAX_UPGRADE_LEVEL}"), 629, y, 0.98)
+        text(g, status, 629, y + 24, 0.88,
+             color_when(g, maxed, TEAL, color_when(g, affordable, AMBER, MUTED)))
+        rect(g, 164, y + 47, 672, 1, RAIL)
+    text(g, "U   Вернуться в клуб", 164, 503, 1.04, TEAL)
+    text(g, "Смена на паузе", 629, 503, 0.9, MUTED)
+
+
 def draw_frame(g):
     width, height = as_real(g, g.get("Width")), as_real(g, g.get("Height"))
     g.set("UiScale", g.math("FMin", A=g.div(width, 1000.0, True), B=g.div(height, 620.0, True)))
@@ -214,6 +266,9 @@ def draw_frame(g):
     intro = g.branch(g.gt(g.get("Phase"), 0))
     g.call("DrawFloorObjects")
     g.call("DrawPlayer")
+    results = g.branch(g.get("ShopOpen"))
+    g.call("DrawShop")
+    g.resume(results)
     g.guard(g.gt(g.get("Phase"), 1))
     g.call("DrawOverlay")
     g.resume(intro)
@@ -226,6 +281,7 @@ SCREEN_GRAPHS = (
     ("DrawBoard", board, ()), ("DrawDesk", desk_card, (("Desk", "int"),) + XY),
     ("DrawStation", station, (("Station", "int"),) + XY + LABEL),
     ("DrawRight", station_right, (("Station", "int"), ("Top", "real")) + LABEL),
-    ("DrawFloorObjects", floor_objects, ()), ("DrawPlayer", draw_player, ()),
+    ("DrawQueue", draw_queue, ()), ("DrawFloorObjects", floor_objects, ()), ("DrawPlayer", draw_player, ()),
+    ("DrawShop", draw_shop, ()),
     ("DrawOverlay", overlay, ()), ("DrawFrame", draw_frame, (("Width", "int"), ("Height", "int"))),
 )

@@ -1,15 +1,20 @@
 """Run in Unreal Editor 5.8 to author the prototype's Blueprint assets."""
 
+from math import exp, pi, sin
 from pathlib import Path
+from struct import pack
 import sys
 import traceback
+import wave
 
 import unreal
 
 TOOLS_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(TOOLS_DIR))
 from blueprint_graph import EDIT, LIB, Graph, pin, pin_type
-from club_rules import ARRAYS, BOOL_DEFAULTS, INT_DEFAULTS, REAL_DEFAULTS, RULE_GRAPHS, start_simulation
+from club_rules import (
+    BELL_PATH, BOOL_DEFAULTS, DESK_ARRAYS, INT_DEFAULTS, LINE_ARRAYS, REAL_DEFAULTS, RULE_GRAPHS, start_simulation,
+)
 from club_screen import SCREEN_GRAPHS
 
 ASSET_ROOT = "/Game/NightShift"
@@ -32,12 +37,43 @@ def require(value, message):
     return value
 
 
+def import_bell():
+    if unreal.EditorAssetLibrary.does_asset_exist(BELL_PATH):
+        return
+    filename = LOG_PATH.parent / "S_DoorBell.wav"
+    filename.parent.mkdir(exist_ok=True)
+    sample_rate = 44100
+    samples = bytearray()
+    for frame in range(int(0.6 * sample_rate)):
+        time = frame / sample_rate
+        amplitude = 0.0
+        for start, pitch in ((0, 1046.5), (0.12, 784.0)):
+            age = time - start
+            if age < 0:
+                continue
+            envelope = min(age / 0.006, 1.0) * exp(-12 * age)
+            amplitude += envelope * (sin(2 * pi * pitch * age) + 0.24 * sin(2 * pi * pitch * 2.76 * age))
+        fade_out = min((0.6 - time) / 0.04, 1.0)
+        samples.extend(pack("<h", round(11000 * amplitude * fade_out)))
+    with wave.open(str(filename), "wb") as sound:
+        sound.setparams((1, 2, sample_rate, 0, "NONE", "not compressed"))
+        sound.writeframes(samples)
+    task = unreal.AssetImportTask()
+    task.filename = str(filename)
+    task.destination_path = BELL_PATH.rsplit("/", 1)[0]
+    task.automated = True
+    task.save = True
+    unreal.AssetToolsHelpers.get_asset_tools().import_asset_tasks([task])
+    require(unreal.EditorAssetLibrary.does_asset_exist(BELL_PATH), "Could not import the doorbell")
+
+
 def create_hud(save=True):
+    import_bell()
     bp = require(LIB.create_blueprint_asset_with_parent(HUD_PATH, unreal.HUD), "Could not create BP_ClubHUD")
     events = EDIT.get_graph_editor_by_name(bp, "EventGraph")
     for type_name, defaults in (
         ("int", INT_DEFAULTS), ("real", REAL_DEFAULTS), ("bool", BOOL_DEFAULTS),
-        ("int[]", dict.fromkeys(ARRAYS, "")),
+        ("int[]", dict.fromkeys(DESK_ARRAYS + LINE_ARRAYS, "")),
     ):
         kind = pin_type(type_name)
         for name, value in defaults.items():
