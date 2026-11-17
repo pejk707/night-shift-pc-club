@@ -113,6 +113,7 @@ def reset_shift(g):
     g.call("ResetGuestModels")
     g.call("CloseRepair")
     g.call("ResetService")
+    g.call("CloseClubMenu")
     g.call("SyncServerAlarm")
     g.guard(g.get("Scene3D"))
     start = g.math("MakeVector", X=ADMIN_START[0], Y=ADMIN_START[1], Z=ADMIN_START[2])
@@ -310,7 +311,7 @@ def server_fault(g):
 
 def shift_step(g):
     modal = g.either(g.get("ShopOpen"), g.get("RepairOpen"))
-    g.guard(g.both(g.eq(g.get("Phase"), 1), g.negate(modal)))
+    g.guard(g.both(g.eq(g.get("Phase"), 1), g.negate(g.either(modal, g.gt(g.get("ClubMenu"), 0)))))
     g.set("Step", g.add(g.get("Step"), 1))
     g.call("ServerFault")
     g.call("AdvanceMicrowave")
@@ -324,12 +325,14 @@ def shift_step(g):
     valid = g.branch(g.eq(g.get("Rating"), 0))
     g.call("CloseServicePanel")
     g.set("Phase", 3)
+    g.call("ShowShiftResults")
     g.resume(valid)
     g.guard(g.negate(g.lt(g.get("Step"), DURATION)))
     g.call("CloseServicePanel")
     won = g.negate(g.lt(g.get("Cash"), g.get("Goal")))
     on_final_night = g.eq(g.get("ShiftNo"), 3)
     g.set("Phase", g.choose(won, g.choose(on_final_night, 4, 2), 3))
+    g.call("ShowShiftResults")
 
 
 def seat_guest(g):
@@ -442,7 +445,7 @@ def update_scene_animation(g):
     pawn = player_pawn(g)
     velocity = g.invoke("Actor.GetVelocity", target=pawn, result="ReturnValue")
     modal = g.either(g.either(g.get("ShopOpen"), g.get("RepairOpen")),
-                    g.gt(g.get("ServicePanel"), NO_SERVICE_PANEL))
+                    g.either(g.gt(g.get("ServicePanel"), NO_SERVICE_PANEL), g.gt(g.get("ClubMenu"), 0)))
     active = g.both(g.eq(g.get("Phase"), 1), g.negate(modal))
     walking = g.both(active, g.gt(g.math("VSizeXY", A=velocity), 12.0, True))
     g.guard(g.math("BooleanXOR", A=walking, B=g.get("SceneWalking")))
@@ -615,9 +618,15 @@ def handle_e(g):
 
 def player_tick(g):
     g.call("UpdateSceneAnimation")
+    playing_normally = g.branch(g.gt(g.get("ClubMenu"), 0))
+    g.call("ClubMenuInput")
+    g.resume(playing_normally)
     g.call("UpdateGuestModels", FrameSeconds=g.get("FrameSeconds"))
     if_enter = g.key("Enter", just_pressed=True)
     playing = g.branch(g.eq(g.get("Phase"), 1))
+    ordinary = g.branch(g.either(g.key("Escape", just_pressed=True), g.key("P", just_pressed=True)))
+    g.call("ShowPauseMenu")
+    g.resume(ordinary)
     ordinary = g.branch(g.get("RepairOpen"))
     g.call("RepairInput")
     g.resume(ordinary)
@@ -660,6 +669,7 @@ def start_simulation(g):
     g.set("Scene3D", g.gt(g.invoke(ARRAY + "Array_Length", result="ReturnValue", TargetArray=cameras), 0))
     g.invoke(SYSTEM + "K2_SetTimer", FunctionName="ShiftStep",
              Time=0.1, bLooping=True)
+    g.call("ShowMainMenu")
     g.guard(g.get("Scene3D"))
     g.call("CacheSceneStations")
     g.call("CachePcStatusAnchors")

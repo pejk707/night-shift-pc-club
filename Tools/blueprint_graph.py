@@ -20,6 +20,8 @@ def pin_type(kind):
         return LIB.get_struct_type(unreal.Vector.static_struct())
     if kind == "actor":
         return LIB.get_object_reference_type(unreal.Actor.static_class())
+    if kind == "widget":
+        return LIB.get_object_reference_type(unreal.UserWidget.static_class())
     return LIB.get_basic_type_by_name(kind)
 
 
@@ -90,10 +92,12 @@ class Graph:
     def call(self, name, **values):
         return self.invoke(name, native=False, **values)
 
-    def get(self, name):
-        if name in self.params:
+    def get(self, name, *, class_path="", target=None):
+        if target is None and name in self.params:
             return self.params[name]
-        node = self.place(self.editor.add_get_member_variable_node(name), pure=True)
+        node = self.place(self.editor.add_get_member_variable_node(name, class_path), pure=True)
+        if target is not None:
+            wire(node.find_self_pin(), target)
         return pin(node, name, True)
 
     def set(self, name, value, *, class_path="", target=None):

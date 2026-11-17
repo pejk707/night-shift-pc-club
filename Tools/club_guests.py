@@ -248,7 +248,7 @@ def step_guest_motion(g):
 
 def update_guest_models(g):
     active = g.both(g.get("Scene3D"), g.eq(g.get("Phase"), 1))
-    paused = g.either(g.get("ShopOpen"), g.get("RepairOpen"))
+    paused = g.either(g.either(g.get("ShopOpen"), g.get("RepairOpen")), g.gt(g.get("ClubMenu"), 0))
     g.guard(g.both(active, g.negate(paused)))
     for index in range(1, CAPACITY + 1):
         g.call("StepGuestMotion", GuestId=index, FrameSeconds=g.clamp(g.get("FrameSeconds"), 0.0, 0.05))

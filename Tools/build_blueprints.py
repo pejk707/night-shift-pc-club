@@ -18,6 +18,7 @@ from club_rules import (
     start_simulation,
 )
 from club_screen import SCREEN_GRAPHS
+from club_menu import MENU_GRAPHS, MENU_INT_DEFAULTS
 from club_service import MICROWAVE_SOUND, SERVICE_GRAPHS, SERVICE_INT_DEFAULTS
 from club_wires import WIRE_BOOL_DEFAULTS, WIRE_GRAPHS, WIRE_INT_DEFAULTS, WIRE_REAL_DEFAULTS
 
@@ -78,13 +79,14 @@ def create_hud(save=True):
     bp = require(LIB.create_blueprint_asset_with_parent(HUD_PATH, unreal.HUD), "Could not create BP_ClubHUD")
     events = EDIT.get_graph_editor_by_name(bp, "EventGraph")
     for type_name, defaults in (
-        ("int", INT_DEFAULTS | WIRE_INT_DEFAULTS | SERVICE_INT_DEFAULTS),
+        ("int", INT_DEFAULTS | WIRE_INT_DEFAULTS | SERVICE_INT_DEFAULTS | MENU_INT_DEFAULTS),
         ("real", REAL_DEFAULTS | WIRE_REAL_DEFAULTS),
         ("bool", BOOL_DEFAULTS | WIRE_BOOL_DEFAULTS),
         ("int[]", dict.fromkeys(DESK_ARRAYS + LINE_ARRAYS + ("WireConnected",) + tuple(RESET_INTS), "")),
         ("real[]", dict.fromkeys(SCENE_ARRAYS, "")),
         ("vector[]", dict.fromkeys(("PcStatusAnchors",) + GUEST_VECTOR_ARRAYS, "")),
         ("actor[]", dict.fromkeys(GUEST_ACTOR_ARRAYS, "")),
+        ("widget", {"ClubMenuWidget": "None"}),
     ):
         kind = pin_type(type_name)
         for name, value in defaults.items():
@@ -92,7 +94,8 @@ def create_hud(save=True):
             require(events.add_member_variable(name, kind, literal), f"Could not add variable {name}")
 
     writers = []
-    for name, writer, params, *result in RULE_GRAPHS + SCREEN_GRAPHS + WIRE_GRAPHS + SERVICE_GRAPHS + GUEST_GRAPHS:
+    graphs = RULE_GRAPHS + SCREEN_GRAPHS + WIRE_GRAPHS + SERVICE_GRAPHS + GUEST_GRAPHS + MENU_GRAPHS
+    for name, writer, params, *result in graphs:
         graph = Graph(require(EDIT.create_and_edit_function_graph(bp, name), f"Could not create {name}"))
         for param, kind in params:
             require(graph.editor.add_graph_input_parameter(param, pin_type(kind)).is_valid(), f"Could not add {name}.{param}")

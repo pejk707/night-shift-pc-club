@@ -275,33 +275,6 @@ def draw_player(g):
     rect(g, offset(g, x, -23), offset(g, y, 16), g.mul(progress, 46.0, True), 5, AMBER)
 
 
-def overlay(g):
-    phase = g.get("Phase")
-    intro = g.eq(phase, 0)
-    won = g.either(g.eq(phase, 2), g.eq(phase, 4))
-    modal_surface(g, 218, 151, 565, 326, color_when(g, intro, BLUE, color_when(g, won, TEAL, PINK)))
-    title = words(g, g.eq(phase, 4), "Три смены закрыты", words(g, won, "План выполнен", "Смена провалена"))
-    text(g, words(g, intro, "Дневной админ ушёл", title), 248, 178, 2.28)
-    summary = g.branch(intro)
-    text(g, "Выполни план выручки и сохрани рейтинг к 06:00.", 249, 227, 1.12, MUTED)
-    for key, y, copy in (
-        ("E", 274, words(g, g.get("Scene3D"), "Зайди за стойку и позови гостя.", "Позови гостя у стойки.")),
-        ("E", 309, "Подойди к свободному ПК и посади гостя."),
-        ("F", 344, "Успокой гостя, когда шкала загорится красным."),
-    ):
-        keycap(g, key, 249, y)
-        text(g, copy, 284, y, 1.05)
-    keycap(g, "Enter", 249, 418, 46, tint=TEAL, height=23)
-    text(g, "Начать смену", 310, 416, 1.28, TEAL)
-    g.resume(summary)
-    text(g, g.append("Выручка   ", g.string(g.get("Cash")), " / ", g.string(g.get("Goal"))), 249, 248, 1.18, TEAL)
-    text(g, g.append("Рейтинг   ", g.string(g.get("Rating")), " / 5"), 249, 280, 1.12, AMBER)
-    text(g, g.append("Ушли в ярости   ", g.string(g.get("Lost")), "     Обслужено   ", g.string(g.get("Served"))), 249, 314, 1.06)
-    prompt = words(g, g.eq(phase, 4), "Начать заново", words(g, won, "Следующая смена", "Повторить смену"))
-    keycap(g, "Enter", 249, 418, 46, tint=TEAL, height=23)
-    text(g, prompt, 310, 416, 1.28, TEAL)
-
-
 def draw_shop(g):
     modal_surface(g, 137, 112, 726, 431, TEAL)
     text(g, "Улучшения клуба", 163, 132, 1.95)
@@ -513,7 +486,6 @@ def draw_scene_controls(g):
 
 def draw_scene_frame(g):
     draw_header(g)
-    inactive = g.branch(g.eq(g.get("Phase"), 1))
     g.call("DrawSceneQueue")
     for index in range(DESKS):
         g.call("DrawScenePcStatus", Desk=index)
@@ -524,8 +496,6 @@ def draw_scene_frame(g):
     g.resume(ordinary)
     g.guard(g.get("ShopOpen"))
     g.call("DrawShop")
-    g.resume(inactive)
-    g.call("DrawOverlay")
 
 
 def draw_frame(g):
@@ -541,25 +511,23 @@ def draw_frame(g):
     ):
         border = g.mul(g.sub(as_real(g, viewport), canvas, True), 0.5, True)
         g.set(member, g.add(g.get(origin), border, True))
+    playing = g.branch(g.gt(g.get("ClubMenu"), 0))
+    g.call("DrawClubMenu")
+    g.resume(playing)
+    g.guard(g.eq(g.get("Phase"), 1))
     flat_view = g.branch(g.get("Scene3D"))
     g.call("DrawSceneFrame")
     g.resume(flat_view)
     g.invoke("HUD.DrawRect", RectColor=BG, ScreenX=0, ScreenY=0, ScreenW=width, ScreenH=height)
     g.call("DrawBoard")
-    intro = g.branch(g.gt(g.get("Phase"), 0))
     g.call("DrawFloorObjects")
     g.call("DrawPlayer")
     g.call("DrawServicePanel")
     regular = g.branch(g.get("RepairOpen"))
     g.call("DrawRepair")
     g.resume(regular)
-    results = g.branch(g.get("ShopOpen"))
+    g.guard(g.get("ShopOpen"))
     g.call("DrawShop")
-    g.resume(results)
-    g.guard(g.gt(g.get("Phase"), 1))
-    g.call("DrawOverlay")
-    g.resume(intro)
-    g.call("DrawOverlay")
 
 
 XY = (("Left", "real"), ("Top", "real"))
@@ -576,5 +544,5 @@ SCREEN_GRAPHS = (
     ("DrawSceneQueueRow", draw_scene_queue_row, (("Slot", "int"),)),
     ("DrawSceneControls", draw_scene_controls, ()),
     ("DrawSceneAction", draw_scene_action, ()),
-    ("DrawOverlay", overlay, ()), ("DrawFrame", draw_frame, (("Width", "int"), ("Height", "int"))),
+    ("DrawFrame", draw_frame, (("Width", "int"), ("Height", "int"))),
 )
