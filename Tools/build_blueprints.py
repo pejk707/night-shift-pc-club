@@ -13,9 +13,12 @@ TOOLS_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(TOOLS_DIR))
 from blueprint_graph import EDIT, LIB, Graph, pin, pin_type
 from club_rules import (
-    BELL_PATH, BOOL_DEFAULTS, DESK_ARRAYS, INT_DEFAULTS, LINE_ARRAYS, REAL_DEFAULTS, RULE_GRAPHS, start_simulation,
+    BELL_PATH, BOOL_DEFAULTS, DESK_ARRAYS, INT_DEFAULTS, LINE_ARRAYS, REAL_DEFAULTS, RULE_GRAPHS, SCENE_ARRAYS,
+    start_simulation,
 )
 from club_screen import SCREEN_GRAPHS
+from club_service import MICROWAVE_SOUND, SERVICE_GRAPHS, SERVICE_INT_DEFAULTS
+from club_wires import WIRE_BOOL_DEFAULTS, WIRE_GRAPHS, WIRE_INT_DEFAULTS, WIRE_REAL_DEFAULTS
 
 ASSET_ROOT = "/Game/NightShift"
 HUD_PATH = ASSET_ROOT + "/Blueprints/BP_ClubHUD"
@@ -37,43 +40,48 @@ def require(value, message):
     return value
 
 
-def import_bell():
-    if unreal.EditorAssetLibrary.does_asset_exist(BELL_PATH):
+def import_signal(path, duration, tones, volume):
+    if unreal.EditorAssetLibrary.does_asset_exist(path):
         return
-    filename = LOG_PATH.parent / "S_DoorBell.wav"
+    folder, name = path.rsplit("/", 1)
+    filename = LOG_PATH.parent / (name + ".wav")
     filename.parent.mkdir(exist_ok=True)
     sample_rate = 44100
     samples = bytearray()
-    for frame in range(int(0.6 * sample_rate)):
+    for frame in range(int(duration * sample_rate)):
         time = frame / sample_rate
         amplitude = 0.0
-        for start, pitch in ((0, 1046.5), (0.12, 784.0)):
+        for start, pitch in tones:
             age = time - start
             if age < 0:
                 continue
             envelope = min(age / 0.006, 1.0) * exp(-12 * age)
             amplitude += envelope * (sin(2 * pi * pitch * age) + 0.24 * sin(2 * pi * pitch * 2.76 * age))
-        fade_out = min((0.6 - time) / 0.04, 1.0)
-        samples.extend(pack("<h", round(11000 * amplitude * fade_out)))
+        fade_out = min((duration - time) / 0.04, 1.0)
+        samples.extend(pack("<h", round(volume * amplitude * fade_out)))
     with wave.open(str(filename), "wb") as sound:
         sound.setparams((1, 2, sample_rate, 0, "NONE", "not compressed"))
         sound.writeframes(samples)
     task = unreal.AssetImportTask()
     task.filename = str(filename)
-    task.destination_path = BELL_PATH.rsplit("/", 1)[0]
+    task.destination_path = folder
     task.automated = True
     task.save = True
     unreal.AssetToolsHelpers.get_asset_tools().import_asset_tasks([task])
-    require(unreal.EditorAssetLibrary.does_asset_exist(BELL_PATH), "Could not import the doorbell")
+    require(unreal.EditorAssetLibrary.does_asset_exist(path), f"Could not import {name}")
 
 
 def create_hud(save=True):
-    import_bell()
+    import_signal(BELL_PATH, 0.6, ((0, 1046.5), (0.12, 784.0)), 11000)
+    import_signal(MICROWAVE_SOUND, 0.48, ((0, 1568.0), (0.2, 1568.0)), 7800)
     bp = require(LIB.create_blueprint_asset_with_parent(HUD_PATH, unreal.HUD), "Could not create BP_ClubHUD")
     events = EDIT.get_graph_editor_by_name(bp, "EventGraph")
     for type_name, defaults in (
-        ("int", INT_DEFAULTS), ("real", REAL_DEFAULTS), ("bool", BOOL_DEFAULTS),
-        ("int[]", dict.fromkeys(DESK_ARRAYS + LINE_ARRAYS, "")),
+        ("int", INT_DEFAULTS | WIRE_INT_DEFAULTS | SERVICE_INT_DEFAULTS),
+        ("real", REAL_DEFAULTS | WIRE_REAL_DEFAULTS),
+        ("bool", BOOL_DEFAULTS | WIRE_BOOL_DEFAULTS),
+        ("int[]", dict.fromkeys(DESK_ARRAYS + LINE_ARRAYS + ("WireConnected",), "")),
+        ("real[]", dict.fromkeys(SCENE_ARRAYS, "")),
     ):
         kind = pin_type(type_name)
         for name, value in defaults.items():
@@ -81,7 +89,7 @@ def create_hud(save=True):
             require(events.add_member_variable(name, kind, literal), f"Could not add variable {name}")
 
     writers = []
-    for name, writer, params, *result in RULE_GRAPHS + SCREEN_GRAPHS:
+    for name, writer, params, *result in RULE_GRAPHS + SCREEN_GRAPHS + WIRE_GRAPHS + SERVICE_GRAPHS:
         graph = Graph(require(EDIT.create_and_edit_function_graph(bp, name), f"Could not create {name}"))
         for param, kind in params:
             require(graph.editor.add_graph_input_parameter(param, pin_type(kind)).is_valid(), f"Could not add {name}.{param}")

@@ -2,13 +2,32 @@
 
 from typing import NamedTuple
 
-from blueprint_graph import SYSTEM
+from blueprint_graph import ARRAY, SYSTEM
+from club_scene import (
+    AC_TAGS, ADMIN_START, BENCH_TAGS, CAMERA_TAG, DRINKS_TAG, PC_TAGS, RECEPTION_TAG,
+    SERVER_ALARM_TAGS, SERVER_LIGHT_TAGS, SERVER_TAG, SNACK_TAG, STOCK_TAG, STOCK_WORKTOP_TAG,
+)
 
 DESKS = 8
 DURATION = 3600  # 0.1-second steps
-FREE, PLAYING, ENERGY, CRASH, BROKEN, FOOD = range(6)
-NONE, DRINK, MOUSE, SNACK = range(4)
+FREE, PLAYING, ENERGY, CRASH, BROKEN, PIZZA = range(6)
+NONE, DRINK, MOUSE, SLICE = range(4)
 RECEPTION, FRIDGE, STOCK, SERVER, KITCHEN = 10, 12, 13, 14, 15
+NO_SERVICE_PANEL, DRINK_PANEL, PC_PANEL = range(3)
+DRINK_NAMES = ("Цитрус", "Ягоды", "Без сахара")
+GAME_FROZEN, LAUNCHER_FROZEN = range(2)
+NO_SLICE, HEATING, HOT, COLD = range(4)
+# Seconds from request creation, at normal pace and at maximum pressure.
+REQUEST_BUDGETS = {CRASH: (40, 30), ENERGY: (55, 45), PIZZA: (70, 60)}
+SCENE_STATIONS = (
+    *((index, tag, 86.0, 84.0) for index, tag in enumerate(PC_TAGS)),
+    (RECEPTION, RECEPTION_TAG, 197.0, 78.0),
+    (FRIDGE, DRINKS_TAG, 88.0, 67.0),
+    (STOCK, STOCK_TAG, 80.0, 63.0),
+    (STOCK, STOCK_WORKTOP_TAG, 58.0, 66.0),
+    (SERVER, SERVER_TAG, 125.0, 76.0),
+    (KITCHEN, SNACK_TAG, 112.0, 80.0),
+)
 CALM, NERVOUS = 1, 2
 LINE_SIZE = 2
 SUPPLIES_NIGHT = 2
@@ -31,22 +50,24 @@ AIR_CONDITIONER = Upgrade("One", "AirConditionerLevel", "Кондиционер"
 BENCH = Upgrade("Two", "BenchLevel", "Скамейка", (350, 550, 800),
                 "Дополнительное ожидание в очереди", (0, 10, 18, 25), " с")
 REPAIR_KIT = Upgrade("Three", "RepairKitLevel", "Набор для ремонта", (650, 900, 1250),
-                     "Сокращение времени перезапуска", (0, 35, 45, 55), "%")
+                     "Сокращение времени перезапуска ПК", (0, 35, 45, 55), "%")
 PARTITIONS = Upgrade("Four", "PartitionsLevel", "Шумозащитные перегородки", (450, 700, 1000),
                       "Снижение потерь от тильта соседей", (0, 1, 2, 3), " ед. за тик")
 PAYMENT_TERMINAL = Upgrade("Five", "TerminalLevel", "Терминал оплаты", (550, 850, 1200),
                            "Доплата за посадку гостя", (0, 20, 35, 50), "")
 UPGRADES = (AIR_CONDITIONER, BENCH, REPAIR_KIT, PARTITIONS, PAYMENT_TERMINAL)
 
-DESK_ARRAYS = ("DeskState", "Patience", "Temper", "NextRequest", "Departure", "Calmed", "WasTilting", "DrainCarry")
+DESK_ARRAYS = ("DeskState", "Patience", "Temper", "NextRequest", "Departure", "Calmed", "WasTilting",
+               "RequestRemaining", "RequestRate", "RequestVariant", "RecoveryStage", "RestartUntil")
 LINE_ARRAYS = ("LineMood", "LineWait")
 INT_DEFAULTS = dict(ShiftNo=1, Phase=0, Rating=5, Cash=0, Lost=0, Served=0, Goal=2200,
                     Places=6, Step=0, NextArrival=0, ArrivalNo=0, Guest=0, HeldItem=0,
                     Focus=-1, HoldFocus=-1, ServerDown=0, OrderRoll=0, Bank=0, Spent=0)
 INT_DEFAULTS.update({upgrade.member + suffix: 0 for upgrade in UPGRADES for suffix in ("", "AtStart")})
 REAL_DEFAULTS = dict(PlayerX=211.0, PlayerY=317.0, HoldTime=0.0,
-                     UiScale=1.0, OriginX=0.0, OriginY=0.0)
-BOOL_DEFAULTS = dict(ActionDone=False, ShopOpen=False)
+                     UiScale=1.0, OriginX=0.0, OriginY=0.0, FocusDistance=0.0)
+BOOL_DEFAULTS = dict(ActionDone=False, ShopOpen=False, Scene3D=False, SceneWalking=False)
+SCENE_ARRAYS = ("SceneCenterX", "SceneCenterY", "SceneRadiusX", "SceneRadiusY")
 
 
 def max_int(g, a, b):
@@ -57,8 +78,20 @@ def min_int(g, a, b):
     return g.math("Min", A=a, B=b)
 
 
+def ceil_div(g, units, divisor):
+    rounding = divisor - 1 if isinstance(divisor, int) else g.sub(divisor, 1)
+    return g.div(g.add(units, rounding), divisor)
+
+
 def rand(g, a, b):
     return g.math("RandomIntegerInRange", Min=a, Max=b)
+
+
+def request_budget(g, state, *, minimum=False):
+    budget = 1
+    for kind, durations in REQUEST_BUDGETS.items():
+        budget = g.choose(g.eq(state, kind), durations[minimum], budget)
+    return budget
 
 
 def reset_shift(g):
@@ -76,6 +109,13 @@ def reset_shift(g):
     for array, size in [(name, DESKS) for name in DESK_ARRAYS] + [(name, LINE_SIZE) for name in LINE_ARRAYS]:
         g.resize(array, 0)
         g.resize(array, size)
+    g.call("CloseRepair")
+    g.call("ResetService")
+    g.call("SyncServerAlarm")
+    g.guard(g.get("Scene3D"))
+    start = g.math("MakeVector", X=ADMIN_START[0], Y=ADMIN_START[1], Z=ADMIN_START[2])
+    g.invoke("Actor.K2_SetActorLocation", target=player_pawn(g), NewLocation=start, bSweep=False, bTeleport=True)
+    g.call("SyncSceneUpgrades")
 
 
 def wallet(g):
@@ -119,6 +159,7 @@ def buy_upgrade(g):
         g.guard(g.negate(g.lt(wallet(g), price)))
         g.set("Spent", g.add(g.get("Spent"), price))
         g.set(upgrade.member, g.add(level, 1))
+        g.call("SyncSceneUpgrades")
         g.resume(other)
 
 
@@ -174,6 +215,7 @@ def report_tilt(g):
 
 def wait_on_request(g):
     desk = g.get("Desk")
+    state = g.arr("DeskState", desk)
     end_left = g.eq(g.mod(desk, 4), 0)
     end_right = g.eq(g.mod(desk, 4), 3)
     left = g.arr("WasTilting", max_int(g, 0, g.sub(desk, 1)))
@@ -183,13 +225,23 @@ def wait_on_request(g):
     # Calm guests are less affected, so their seat can interrupt a chain.
     tilt_penalty = g.choose(g.gt(spread, 0), g.add(1, g.mul(temper, 2)), 0)
     penalty = max_int(g, 0, g.sub(tilt_penalty, upgrade_effect(g, PARTITIONS)))
-    server = g.choose(g.gt(g.get("ServerDown"), 0), 1, 0)
-    drain = g.add(1, g.add(penalty, server))
+    server = g.choose(g.gt(g.get("ServerDown"), 0), 22, 0)
+    calm = g.choose(g.eq(temper, 0), 8, 0)
+    drain = g.add(g.sub(100, calm), g.add(g.mul(7, penalty), server))
     multiplier = g.sub(100, upgrade_effect(g, AIR_CONDITIONER))
-    numerator = g.add(g.mul(drain, multiplier), g.arr("DrainCarry", desk))
-    g.store("Patience", desk, max_int(g, 0, g.sub(g.arr("Patience", desk), g.div(numerator, 100))))
-    g.store("DrainCarry", desk, g.mod(numerator, 100))
-    g.guard(g.eq(g.arr("Patience", desk), 0))
+    normal_seconds = request_budget(g, state)
+    minimum_seconds = request_budget(g, state, minimum=True)
+    # One second has ten steps. Normal drain consumes 100 units per step.
+    # Cap the instantaneous rate so even uninterrupted pressure respects the deadline.
+    cap = g.div(g.mul(normal_seconds, 100), minimum_seconds)
+    rate = min_int(g, cap, g.div(g.mul(drain, multiplier), 100))
+    g.store("RequestRate", desk, rate)
+    g.store("RequestRemaining", desk, max_int(g, 0, g.sub(g.arr("RequestRemaining", desk), rate)))
+    remaining = g.arr("RequestRemaining", desk)
+    units_per_percent = g.mul(normal_seconds, 10)
+    percent = ceil_div(g, remaining, units_per_percent)
+    g.store("Patience", desk, min_int(g, 100, percent))
+    g.guard(g.eq(remaining, 0))
     g.store("DeskState", desk, g.choose(g.lt(g.get("ShiftNo"), SUPPLIES_NIGHT), FREE, BROKEN))
     g.call("LoseGuest")
 
@@ -200,11 +252,26 @@ def new_order(g):
     g.set("OrderRoll", roll)
     roll = g.get("OrderRoll")
     has_food = g.both(g.negate(g.lt(g.get("ShiftNo"), SUPPLIES_NIGHT)), g.gt(roll, 3))
-    request = g.choose(has_food, FOOD, g.choose(g.lt(roll, 2), CRASH, ENERGY))
-    g.store("DeskState", desk, request)
+    request = g.choose(has_food, PIZZA, g.choose(g.lt(roll, 2), CRASH, ENERGY))
+    variant = g.choose(g.eq(request, ENERGY), rand(g, 0, len(DRINK_NAMES) - 1), roll)
+    g.call("StartOrder", Desk=desk, Request=request, Variant=variant)
+
+
+def start_order(g):
+    desk, state = g.get("Desk"), g.get("Request")
+    duration = request_budget(g, state)
+    late = g.gt(g.add(g.get("Step"), g.mul(duration, 10)), DURATION)
+    time_left = g.branch(late)
+    g.store("NextRequest", desk, DURATION)
+    g.resume(time_left)
+    g.store("DeskState", desk, state)
+    g.store("RequestVariant", desk, g.get("Variant"))
+    g.store("RequestRemaining", desk, g.mul(duration, 1000))
+    g.store("RequestRate", desk, 100)
     g.store("Patience", desk, 100)
-    g.store("DrainCarry", desk, 0)
     g.store("Calmed", desk, 0)
+    g.store("RecoveryStage", desk, 0)
+    g.store("RestartUntil", desk, 0)
 
 
 def update_desk(g):
@@ -213,8 +280,9 @@ def update_desk(g):
     state = g.arr("DeskState", desk)
     g.guard(g.both(g.gt(state, FREE), g.negate(g.eq(state, BROKEN))))
     playing = g.branch(g.gt(state, PLAYING))
-    pace = g.choose(g.both(g.eq(g.arr("Temper", desk), 0), g.eq(g.mod(step, 4), 0)), 1, 0)
-    g.guard(g.eq(pace, 0))
+    waiting = g.branch(g.both(g.eq(state, CRASH), g.gt(g.arr("RestartUntil", desk), 0)))
+    g.call("FinishPcRecovery", Desk=desk)
+    g.resume(waiting)
     g.call("WaitOnRequest", Desk=desk)
     g.resume(playing)
     new_task = g.branch(g.negate(g.lt(step, g.arr("Departure", desk))))
@@ -230,12 +298,15 @@ def server_fault(g):
     later = g.both(g.gt(night, 1), g.eq(step, g.sub(3140, g.mul(night, 100))))
     g.guard(g.either(first, later))
     g.set("ServerDown", 1)
+    g.call("SyncServerAlarm")
 
 
 def shift_step(g):
-    g.guard(g.both(g.eq(g.get("Phase"), 1), g.negate(g.get("ShopOpen"))))
+    modal = g.either(g.get("ShopOpen"), g.get("RepairOpen"))
+    g.guard(g.both(g.eq(g.get("Phase"), 1), g.negate(modal)))
     g.set("Step", g.add(g.get("Step"), 1))
     g.call("ServerFault")
+    g.call("AdvanceMicrowave")
     for slot in reversed(range(LINE_SIZE)):
         g.call("CountQueue", Slot=slot)
     g.call("SpawnGuest")
@@ -244,9 +315,11 @@ def shift_step(g):
     for desk in range(DESKS):
         g.call("UpdateDesk", Desk=desk)
     valid = g.branch(g.eq(g.get("Rating"), 0))
+    g.call("CloseServicePanel")
     g.set("Phase", 3)
     g.resume(valid)
     g.guard(g.negate(g.lt(g.get("Step"), DURATION)))
+    g.call("CloseServicePanel")
     won = g.negate(g.lt(g.get("Cash"), g.get("Goal")))
     on_final_night = g.eq(g.get("ShiftNo"), 3)
     g.set("Phase", g.choose(won, g.choose(on_final_night, 4, 2), 3))
@@ -274,6 +347,7 @@ def confirm_seat(g):
 def close_order(g):
     desk, step = g.get("Desk"), g.get("Step")
     g.store("DeskState", desk, PLAYING)
+    g.store("RestartUntil", desk, 0)
     g.store("NextRequest", desk, g.add(step, rand(g, 135, 215)))
     g.set("Cash", g.add(g.get("Cash"), g.get("Reward")))
 
@@ -286,15 +360,17 @@ def service_desk(g):
     g.call("ConfirmSeat", Desk=desk)
     g.resume(next_action)
     next_action = g.branch(g.eq(state, CRASH))
-    g.call("CloseOrder", Desk=desk, Reward=45)
+    g.call("OpenPcPanel", Desk=desk)
     g.resume(next_action)
     next_action = g.branch(g.eq(state, BROKEN))
     g.guard(g.eq(g.get("HeldItem"), MOUSE))
     g.set("HeldItem", NONE)
     g.store("DeskState", desk, FREE)
     g.resume(next_action)
-    valid = g.either(g.both(g.eq(state, ENERGY), g.eq(g.get("HeldItem"), DRINK)),
-                     g.both(g.eq(state, FOOD), g.eq(g.get("HeldItem"), SNACK)))
+    correct_drink = g.both(g.eq(g.get("HeldItem"), DRINK),
+                           g.eq(g.get("HeldDrink"), g.arr("RequestVariant", desk)))
+    valid = g.either(g.both(g.eq(state, ENERGY), correct_drink),
+                     g.both(g.eq(state, PIZZA), g.eq(g.get("HeldItem"), SLICE)))
     g.guard(valid)
     g.set("HeldItem", NONE)
     g.call("CloseOrder", Desk=desk, Reward=g.choose(g.eq(state, ENERGY), 85, 110))
@@ -307,6 +383,7 @@ def cool_guest(g):
     g.guard(g.both(g.gt(state, PLAYING), g.negate(g.eq(state, BROKEN))))
     g.guard(g.both(g.lt(g.arr("Patience", desk), 30), g.eq(g.arr("Calmed", desk), 0)))
     g.store("Patience", desk, 65)
+    g.store("RequestRemaining", desk, g.mul(request_budget(g, state), 650))
     g.store("Calmed", desk, 1)
 
 
@@ -318,20 +395,59 @@ def interact(g):
     g.resume(station)
     other = g.branch(g.eq(focus, SERVER))
     g.guard(g.eq(g.get("ServerDown"), 1))
-    g.set("ServerDown", 0)
-    g.set("Cash", g.add(g.get("Cash"), 100))
+    g.call("OpenRepair")
     g.resume(other)
     other = g.branch(g.eq(focus, RECEPTION))
     g.set("Guest", g.arr("LineMood", 0))
     g.resume(other)
     gated_station = g.either(g.eq(focus, STOCK), g.eq(focus, KITCHEN))
     g.guard(g.negate(g.both(gated_station, g.lt(g.get("ShiftNo"), SUPPLIES_NIGHT))))
-    item = g.choose(g.eq(focus, FRIDGE), DRINK, g.choose(g.eq(focus, STOCK), MOUSE, SNACK))
-    g.set("HeldItem", item)
+    other = g.branch(g.eq(focus, FRIDGE))
+    g.call("OpenFridgePanel")
+    g.resume(other)
+    other = g.branch(g.eq(focus, KITCHEN))
+    g.call("UseMicrowave")
+    g.resume(other)
+    g.guard(g.eq(g.get("HeldItem"), NONE))
+    g.set("HeldItem", MOUSE)
 
 
 def within(g, value, center, radius):
     return g.lt(g.math("Abs", A=g.sub(value, center, True)), radius, True)
+
+
+def player_pawn(g):
+    return g.invoke("GameplayStatics.GetPlayerPawn", result="ReturnValue", PlayerIndex=0)
+
+
+def tagged_actors(g, tag):
+    return g.invoke("GameplayStatics.GetAllActorsWithTag", result="OutActors", Tag=tag)
+
+
+def apply_scene_movement(g):
+    direction = g.math("MakeVector", X=g.get("AxisX"), Y=g.get("AxisY"), Z=0.0)
+    g.invoke("Pawn.AddMovementInput", target=player_pawn(g), WorldDirection=direction)
+
+
+def update_scene_animation(g):
+    g.guard(g.get("Scene3D"))
+    pawn = player_pawn(g)
+    velocity = g.invoke("Actor.GetVelocity", target=pawn, result="ReturnValue")
+    modal = g.either(g.either(g.get("ShopOpen"), g.get("RepairOpen")),
+                    g.gt(g.get("ServicePanel"), NO_SERVICE_PANEL))
+    active = g.both(g.eq(g.get("Phase"), 1), g.negate(modal))
+    walking = g.both(active, g.gt(g.math("VSizeXY", A=velocity), 12.0, True))
+    g.guard(g.math("BooleanXOR", A=walking, B=g.get("SceneWalking")))
+    g.set("SceneWalking", walking)
+    mesh = g.invoke("Actor.GetComponentByClass", result="ReturnValue", target=pawn,
+                    ComponentClass="/Script/Engine.SkeletalMeshComponent")
+    idle = g.branch(g.get("SceneWalking"))
+    for clip in ("Walk", "Idle"):
+        name = "SK_Admin_" + clip
+        g.invoke("SkeletalMeshComponent.PlayAnimation", target=mesh, bLooping=True,
+                 NewAnimToPlay=f"/Game/NightShift/Art/Characters/Admin/SkeletalMeshes/{name}.{name}")
+        if clip == "Walk":
+            g.resume(idle)
 
 
 def move(g):
@@ -341,6 +457,9 @@ def move(g):
     up, down = g.key("W"), g.key("S")
     dx = g.sub(g.choose(right, 1.0, 0.0, "Float"), g.choose(left, 1.0, 0.0, "Float"), True)
     dy = g.sub(g.choose(down, 1.0, 0.0, "Float"), g.choose(up, 1.0, 0.0, "Float"), True)
+    map_view = g.branch(g.get("Scene3D"))
+    g.call("ApplySceneMovement", AxisX=dx, AxisY=dy)
+    g.resume(map_view)
     diagonal = g.both(g.math("BooleanXOR", A=left, B=right), g.math("BooleanXOR", A=up, B=down))
     step = g.mul(step, g.choose(diagonal, 0.7071068, 1.0, "Float"), True)
     g.set("PlayerX", g.clamp(g.add(g.get("PlayerX"), g.mul(dx, step, True), True), 40.0, 955.0))
@@ -348,6 +467,9 @@ def move(g):
 
 
 def find_focus(g):
+    map_view = g.branch(g.get("Scene3D"))
+    g.call("FindSceneFocus")
+    g.resume(map_view)
     x, y = g.get("PlayerX"), g.get("PlayerY")
     col = g.math("FTrunc", A=g.div(g.sub(x, 240, True), 146, True))
     top = within(g, y, 245.0, 57.0)
@@ -362,21 +484,94 @@ def find_focus(g):
         g.set("Focus", g.choose(hit, index, g.get("Focus")))
 
 
+def find_scene_focus(g):
+    location = g.invoke("Actor.K2_GetActorLocation", target=player_pawn(g), result="ReturnValue")
+    x = g.invoke("KismetMathLibrary.BreakVector", result="X", InVec=location)
+    y = g.invoke("KismetMathLibrary.BreakVector", result="Y", InVec=location)
+    g.set("Focus", -1)
+    g.set("FocusDistance", 1000000.0)
+    for slot, (focus, _, _, _) in enumerate(SCENE_STATIONS):
+        g.call("CheckSceneStation", Slot=slot, Station=focus, PlayerWorldX=x, PlayerWorldY=y)
+
+
+def cache_scene_stations(g):
+    for member in SCENE_ARRAYS:
+        g.resize(member, len(SCENE_STATIONS))
+    for slot, (_, tag, rx, ry) in enumerate(SCENE_STATIONS):
+        g.call("CacheSceneStation", Slot=slot, Tag=tag, RadiusX=rx, RadiusY=ry)
+
+
+def cache_scene_station(g):
+    slot = g.get("Slot")
+    matches = tagged_actors(g, g.get("Tag"))
+    g.guard(g.gt(g.invoke(ARRAY + "Array_Length", result="ReturnValue", TargetArray=matches), 0))
+    actor = g.invoke(ARRAY + "Array_Get", result="Item", TargetArray=matches, Index=0)
+    location = g.invoke("Actor.K2_GetActorLocation", target=actor, result="ReturnValue")
+    x, y = g.invoke("KismetMathLibrary.BreakVector", result=("X", "Y"), InVec=location)
+    for member, value in zip(SCENE_ARRAYS, (x, y, g.get("RadiusX"), g.get("RadiusY"))):
+        g.store(member, slot, value)
+
+
+def check_scene_station(g):
+    slot = g.get("Slot")
+    rx, ry = g.arr("SceneRadiusX", slot), g.arr("SceneRadiusY", slot)
+    g.guard(g.gt(rx, 0.0, True))
+    dx = g.sub(g.get("PlayerWorldX"), g.arr("SceneCenterX", slot), True)
+    dy = g.sub(g.get("PlayerWorldY"), g.arr("SceneCenterY", slot), True)
+    x_ratio, y_ratio = g.div(dx, rx, True), g.div(dy, ry, True)
+    ellipse = g.add(g.mul(x_ratio, x_ratio, True), g.mul(y_ratio, y_ratio, True), True)
+    distance = g.add(g.mul(dx, dx, True), g.mul(dy, dy, True), True)
+    g.guard(g.both(g.lt(ellipse, 1.0, True), g.lt(distance, g.get("FocusDistance"), True)))
+    g.set("Focus", g.get("Station"))
+    g.set("FocusDistance", distance)
+
+
+def set_scene_prop(g):
+    matches = tagged_actors(g, g.get("Tag"))
+    g.guard(g.gt(g.invoke(ARRAY + "Array_Length", result="ReturnValue", TargetArray=matches), 0))
+    actor = g.invoke(ARRAY + "Array_Get", result="Item", TargetArray=matches, Index=0)
+    shown = g.get("Shown")
+    g.invoke("Actor.SetActorHiddenInGame", target=actor, bNewHidden=g.negate(shown))
+    g.invoke("Actor.SetActorEnableCollision", target=actor, bNewActorEnableCollision=shown)
+
+
+def sync_scene_upgrades(g):
+    g.guard(g.get("Scene3D"))
+    for upgrade, tiers in ((BENCH, tuple((tag,) for tag in BENCH_TAGS)), (AIR_CONDITIONER, AC_TAGS)):
+        for level, tags in enumerate(tiers):
+            for tag in tags:
+                g.call("SetSceneProp", Tag=tag, Shown=g.gt(g.get(upgrade.member), level))
+
+
+def set_server_light(g):
+    matches = tagged_actors(g, g.get("Tag"))
+    g.guard(g.gt(g.invoke(ARRAY + "Array_Length", result="ReturnValue", TargetArray=matches), 0))
+    actor = g.invoke(ARRAY + "Array_Get", result="Item", TargetArray=matches, Index=0)
+    light = g.invoke("Actor.GetComponentByClass", target=actor, result="ReturnValue",
+                     ComponentClass="/Script/Engine.LightComponent")
+    g.invoke("SceneComponent.SetVisibility", target=light, bNewVisibility=g.get("Active"))
+
+
+def sync_server_alarm(g):
+    g.guard(g.get("Scene3D"))
+    alarm = g.eq(g.get("ServerDown"), 1)
+    for tag in SERVER_ALARM_TAGS:
+        g.call("SetSceneProp", Tag=tag, Shown=alarm)
+    for tag in SERVER_LIGHT_TAGS:
+        g.call("SetServerLight", Tag=tag, Active=alarm)
+
+
 def interact_duration(g):
     focus = g.get("Focus")
-    reduction = g.math("Conv_IntToDouble", InInt=upgrade_effect(g, REPAIR_KIT))
-    multiplier = g.sub(1.0, g.div(reduction, 100.0, True), True)
     other = g.branch(g.both(g.gt(focus, -1), g.lt(focus, DESKS)))
     state = g.arr("DeskState", focus)
-    pc_time = g.mul(0.85, multiplier, True)
-    g.ret(g.choose(g.eq(state, CRASH), pc_time, g.choose(g.eq(state, BROKEN), 0.55, 0.0, "Float"), "Float"))
+    g.ret(g.choose(g.eq(state, BROKEN), 0.55, 0.0, "Float"))
     g.resume(other)
-    server_time = g.mul(1.15, multiplier, True)
-    g.ret(g.choose(g.eq(focus, SERVER), server_time, 0.0, "Float"))
+    g.ret(0.0)
 
 
 def handle_e(g):
-    down = g.key("E")
+    down = g.either(g.key("E"), g.key("E", just_pressed=True))
     released = g.branch(down)
     g.guard(g.negate(g.get("ActionDone")))
     same = g.eq(g.get("Focus"), g.get("HoldFocus"))
@@ -394,8 +589,15 @@ def handle_e(g):
 
 
 def player_tick(g):
+    g.call("UpdateSceneAnimation")
     if_enter = g.key("Enter", just_pressed=True)
     playing = g.branch(g.eq(g.get("Phase"), 1))
+    ordinary = g.branch(g.get("RepairOpen"))
+    g.call("RepairInput")
+    g.resume(ordinary)
+    ordinary = g.branch(g.gt(g.get("ServicePanel"), NO_SERVICE_PANEL))
+    g.call("ServicePanelInput")
+    g.resume(ordinary)
     g.call("ShopInput")
     g.guard(g.negate(g.get("ShopOpen")))
     g.call("MoveAdmin", FrameSeconds=g.get("FrameSeconds"))
@@ -428,8 +630,13 @@ def shop_input(g):
 
 
 def start_simulation(g):
+    cameras = tagged_actors(g, CAMERA_TAG)
+    g.set("Scene3D", g.gt(g.invoke(ARRAY + "Array_Length", result="ReturnValue", TargetArray=cameras), 0))
     g.invoke(SYSTEM + "K2_SetTimer", FunctionName="ShiftStep",
              Time=0.1, bLooping=True)
+    g.guard(g.get("Scene3D"))
+    g.call("CacheSceneStations")
+    g.call("SyncServerAlarm")
 
 
 I = (("Desk", "int"),)
@@ -439,9 +646,21 @@ RULE_GRAPHS = (
     ("AdvanceQueue", advance_queue, ()), ("CountQueue", count_queue, (("Slot", "int"),)),
     ("SpawnGuest", spawn_guest, ()), ("ReportTilt", report_tilt, I), ("WaitOnRequest", wait_on_request, I),
     ("NewOrder", new_order, I), ("UpdateDesk", update_desk, I), ("ServerFault", server_fault, ()),
+    ("StartOrder", start_order, I + (("Request", "int"), ("Variant", "int"))),
     ("ShiftStep", shift_step, ()), ("SeatGuest", seat_guest, I), ("ConfirmSeat", confirm_seat, I),
     ("CloseOrder", close_order, I + (("Reward", "int"),)), ("ServiceDesk", service_desk, I),
     ("CoolGuest", cool_guest, ()), ("Interact", interact, ()), ("MoveAdmin", move, DT),
+    ("ApplySceneMovement", apply_scene_movement, (("AxisX", "real"), ("AxisY", "real"))),
+    ("UpdateSceneAnimation", update_scene_animation, ()),
+    ("FindSceneFocus", find_scene_focus, ()), ("SyncSceneUpgrades", sync_scene_upgrades, ()),
+    ("CacheSceneStations", cache_scene_stations, ()),
+    ("CacheSceneStation", cache_scene_station, (("Slot", "int"), ("Tag", "name"),
+                                                ("RadiusX", "real"), ("RadiusY", "real"))),
+    ("CheckSceneStation", check_scene_station, (("Slot", "int"), ("Station", "int"),
+                                               ("PlayerWorldX", "real"), ("PlayerWorldY", "real"))),
+    ("SetSceneProp", set_scene_prop, (("Tag", "name"), ("Shown", "bool"))),
+    ("SyncServerAlarm", sync_server_alarm, ()),
+    ("SetServerLight", set_server_light, (("Tag", "name"), ("Active", "bool"))),
     ("FindFocus", find_focus, ()), ("InteractDuration", interact_duration, (), "real"),
     ("HandleE", handle_e, DT), ("PlayerTick", player_tick, DT),
     ("ShopInput", shop_input, ()), ("BuyUpgrade", buy_upgrade, (("Choice", "int"),)),

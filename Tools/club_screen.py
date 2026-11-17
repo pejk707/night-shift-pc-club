@@ -1,8 +1,9 @@
 """Build the Blueprint HUD and top-down club floor plan."""
 
 from club_rules import (
-    BROKEN, CRASH, DURATION, ENERGY, FREE, FRIDGE, KITCHEN, LINE_SIZE, MAX_UPGRADE_LEVEL,
-    NERVOUS, PLAYING, RECEPTION, SERVER, STOCK, SUPPLIES_NIGHT, UPGRADES, value_at_level, wallet,
+    BROKEN, COLD, CRASH, DRINK, DRINK_NAMES, DURATION, ENERGY, FREE, FRIDGE, HEATING, HOT, KITCHEN,
+    LINE_SIZE, MAX_UPGRADE_LEVEL, MOUSE, NERVOUS, NO_SLICE, PIZZA, PLAYING, RECEPTION, SERVER, SLICE,
+    STOCK, SUPPLIES_NIGHT, UPGRADES, ceil_div, max_int, value_at_level, wallet,
 )
 
 
@@ -58,6 +59,33 @@ def words(g, condition, yes, no):
     return g.choose(condition, yes, no, "String")
 
 
+def drink_label(g, variant):
+    label = DRINK_NAMES[0]
+    for index, name in enumerate(DRINK_NAMES[1:], 1):
+        label = words(g, g.eq(variant, index), name, label)
+    return label
+
+
+def cargo_label(g):
+    item = g.get("HeldItem")
+    cargo = words(g, g.eq(item, MOUSE), "Мышь", words(g, g.eq(item, SLICE), "Пицца", "Пусто"))
+    return words(g, g.eq(item, DRINK), drink_label(g, g.get("HeldDrink")), cargo)
+
+
+def request_seconds(g, desk):
+    units_per_second = g.mul(max_int(g, g.arr("RequestRate", desk), 1), 10)
+    return ceil_div(g, g.arr("RequestRemaining", desk), units_per_second)
+
+
+def microwave_label(g, idle=""):
+    state = g.get("MicrowaveState")
+    seconds = g.string(ceil_div(g, max_int(g, 0, g.sub(g.get("MicrowaveAt"), g.get("Step"))), 10))
+    ready = g.append("Пицца готова · ", seconds, " с")
+    heating = g.append("Пицца греется · ", seconds, " с")
+    cold = words(g, g.eq(state, COLD), "Пицца остыла", idle)
+    return words(g, g.eq(state, HOT), ready, words(g, g.eq(state, HEATING), heating, cold))
+
+
 def panel(g, x, y, width, height, selected=False):
     rect(g, x, y, width, height, color_when(g, selected, TEAL, RAIL))
     rect(g, offset(g, x, 2.0), offset(g, y, 2.0), width - 4, height - 4, CARD)
@@ -71,14 +99,7 @@ def clock(g):
     return g.append(h, ":", m)
 
 
-def board(g):
-    rect(g, 0, 0, 1000, 620, BG)
-    rect(g, 28, 101, 944, 451, RAIL)
-    rect(g, 30, 103, 940, 447, FLOOR)
-    rect(g, 30, 103, 940, 4, BLUE)
-    rect(g, 216, 149, 1, 369, RAIL)
-    rect(g, 838, 149, 1, 369, RAIL)
-    rect(g, 240, 336, 582, 2, RAIL)
+def draw_header(g):
     text(g, "НОЧНАЯ СМЕНА", 29, 22, 2.0)
     text(g, "КОМПЬЮТЕРНЫЙ КЛУБ", 32, 55, 0.82, MUTED)
     for title, value, x, tint in (
@@ -92,6 +113,17 @@ def board(g):
         text(g, value, x, 46, 1.5, tint)
     rect(g, 28, 84, 944, 3, RAIL)
     rect(g, 28, 84, g.div(g.mul(as_real(g, g.get("Step")), 944.0, True), DURATION, True), 3, TEAL)
+
+
+def board(g):
+    rect(g, 0, 0, 1000, 620, BG)
+    rect(g, 28, 101, 944, 451, RAIL)
+    rect(g, 30, 103, 940, 447, FLOOR)
+    rect(g, 30, 103, 940, 4, BLUE)
+    rect(g, 216, 149, 1, 369, RAIL)
+    rect(g, 838, 149, 1, 369, RAIL)
+    rect(g, 240, 336, 582, 2, RAIL)
+    draw_header(g)
     text(g, "ОЧЕРЕДЬ", 46, 157, 0.9, MUTED)
     text(g, "РЯД А", 244, 160, 0.9, MUTED)
     text(g, "РЯД Б", 244, 354, 0.9, MUTED)
@@ -107,8 +139,9 @@ def desk_card(g):
     request = g.both(g.gt(status, PLAYING), g.negate(is_broken))
     patience = g.arr("Patience", index)
     tilting = g.both(request, g.lt(patience, 30))
-    label = words(g, is_drink, "Энергетик", "Перекус")
-    for cond, title in ((is_broken, "Мышь сломана"), (is_crash, "Игра вылетела"), (is_playing, "Играет"), (is_free, "Свободен"), (g.negate(enabled), "Пока недоступен")):
+    label = words(g, is_drink, drink_label(g, g.arr("RequestVariant", index)), "Пицца")
+    playing = words(g, g.eq(g.get("ServerDown"), 1), "Нет сети", "Играет")
+    for cond, title in ((is_broken, "Мышь сломана"), (is_crash, "Игра вылетела"), (is_playing, playing), (is_free, "Свободен"), (g.negate(enabled), "Пока недоступен")):
         label = words(g, cond, title, label)
     tint = color_when(g, g.either(tilting, is_broken), PINK,
                       color_when(g, request, AMBER, color_when(g, is_playing, TEAL, MUTED)))
@@ -123,6 +156,8 @@ def desk_card(g):
     show_mood = g.both(enabled, g.both(g.negate(is_free), g.negate(is_broken)))
     opens = words(g, g.eq(index, 6), "Со 2-й смены", "С 3-й смены")
     detail = words(g, enabled, words(g, show_mood, mood, ""), opens)
+    seconds = g.append(g.string(request_seconds(g, index)), " с")
+    detail = words(g, g.both(enabled, request), g.append(mood, " · ", seconds), detail)
     text(g, detail, offset(g, x, 11), offset(g, y, 68), 0.79, MUTED)
     rect(g, offset(g, x, 11), offset(g, y, 96), 115, 4, RAIL)
     width = g.mul(as_real(g, g.choose(request, patience, 0)), 1.15, True)
@@ -176,8 +211,9 @@ def floor_objects(g):
     g.call("DrawRight", Station=SERVER, Top=187.0, Title="Сервер", Status=words(g, off, "Оффлайн", "В сети"),
            Tint=color_when(g, off, PINK, TEAL))
     g.call("DrawRight", Station=KITCHEN, Top=400.0, Title="Снэк-бар",
-           Status=words(g, supplies_open, "Перекус", "Пока недоступно"),
+           Status=words(g, supplies_open, "Пицца", "Пока недоступно"),
            Tint=color_when(g, supplies_open, AMBER, MUTED))
+    text(g, microwave_label(g), 849, 489, 0.68, AMBER)
     unlock = words(g, supplies_open, "", "Со 2-й смены")
     text(g, unlock, 54, 514, 0.78, MUTED)
     text(g, unlock, 858, 464, 0.78, MUTED)
@@ -188,9 +224,7 @@ def draw_player(g):
     rect(g, offset(g, x, -11), offset(g, y, -11), 22, 22, INSET)
     rect(g, offset(g, x, -8), offset(g, y, -8), 16, 16, TEAL)
     rect(g, offset(g, x, -4), offset(g, y, -4), 8, 8, WHITE)
-    item = g.get("HeldItem")
-    cargo = words(g, g.eq(item, 1), "Энергетик", words(g, g.eq(item, 2), "Мышь", words(g, g.eq(item, 3), "Перекус", "Пусто")))
-    text(g, g.append("Предмет  /  ", cargo), 29, 572, 1.09, TEAL)
+    text(g, g.append("Предмет  /  ", cargo_label(g)), 29, 572, 1.09, TEAL)
     text(g, "WASD  идти     E  действие / удерживать     F  успокоить     Q  отменить", 275, 574, 0.9, WHITE)
     text(g, "U  улучшения", 849, 574, 1.0, TEAL)
     limit = g.call("InteractDuration", result="Value")
@@ -256,16 +290,104 @@ def draw_shop(g):
     text(g, "Смена на паузе", 629, 503, 0.9, MUTED)
 
 
+def draw_scene_frame(g):
+    rect(g, 0, 0, 1000, 93, OVERLAY)
+    draw_header(g)
+    inactive = g.branch(g.eq(g.get("Phase"), 1))
+    rect(g, 18, 106, 147, 105, OVERLAY)
+    text(g, "ОЧЕРЕДЬ", 28, 117, 0.85, BLUE)
+    for slot in range(LINE_SIZE):
+        mood = g.arr("LineMood", slot)
+        name = words(g, g.eq(mood, NERVOUS), "Нервный", "Спокойный")
+        seconds = g.string(g.div(g.add(g.arr("LineWait", slot), 9), 10))
+        line = words(g, g.gt(mood, 0), g.append(name, " · ", seconds, " с"), "Пусто" if slot == 0 else "")
+        text(g, line, 28, 144 + 24 * slot, 0.86)
+    rect(g, 820, 106, 162, 275, OVERLAY)
+    text(g, "КОМПЬЮТЕРЫ", 831, 117, 0.85, BLUE)
+    for index in range(8):
+        state = g.arr("DeskState", index)
+        open_pc = g.lt(index, g.get("Places"))
+        playing = words(g, g.eq(g.get("ServerDown"), 1), "Нет сети", "Играет")
+        crash = words(g, g.gt(g.arr("RestartUntil", index), 0), "Запуск", "Вылет")
+        label = "Пицца"
+        for value, name in ((FREE, "Свободен"), (PLAYING, playing), (CRASH, crash),
+                            (ENERGY, drink_label(g, g.arr("RequestVariant", index))), (BROKEN, "Мышь")):
+            label = words(g, g.eq(state, value), name, label)
+        tint = color_when(g, g.gt(state, PLAYING), AMBER, MUTED)
+        tint = color_when(g, g.eq(g.get("Focus"), index), TEAL, tint)
+        y = 143 + 26 * index
+        text(g, f"{index + 1}", 831, y, 0.85, tint)
+        text(g, words(g, open_pc, label, "Закрыт"), 852, y, 0.85, tint)
+        request = g.both(g.gt(state, PLAYING), g.negate(g.eq(state, BROKEN)))
+        seconds = request_seconds(g, index)
+        show_time = g.both(request, g.eq(g.arr("RestartUntil", index), 0))
+        text(g, words(g, show_time, g.append(g.string(seconds), " с"), ""), 946, y, 0.72,
+             color_when(g, g.lt(seconds, 11), PINK, MUTED))
+        width = g.mul(as_real(g, g.choose(request, g.arr("Patience", index), 0)), 0.96, True)
+        rect(g, 852, y + 16, width, 2, tint)
+    text(g, words(g, g.gt(g.get("ServerDown"), 0), "Сервер отключён", "Сервер в сети"), 831, 354, 0.78,
+         color_when(g, g.gt(g.get("ServerDown"), 0), PINK, TEAL))
+
+    rect(g, 0, 547, 1000, 73, OVERLAY)
+    focus = g.get("Focus")
+    pc = g.both(g.gt(focus, -1), g.lt(focus, 8))
+    nearby = words(g, pc, g.append("ПК ", g.string(g.add(focus, 1))), "")
+    for station, name in ((RECEPTION, "Стойка"), (FRIDGE, "Холодильник"), (STOCK, "Склад"),
+                          (SERVER, "Сервер"), (KITCHEN, "Снэк-бар")):
+        nearby = words(g, g.eq(focus, station), name, nearby)
+    supply = g.either(g.eq(focus, STOCK), g.eq(focus, KITCHEN))
+    locked = g.both(supply, g.lt(g.get("ShiftNo"), SUPPLIES_NIGHT))
+    hint = words(g, locked, g.append(nearby, " · со второй смены"), g.append("E  ·  ", nearby))
+    hint = words(g, g.eq(focus, SERVER),
+                 words(g, g.eq(g.get("ServerDown"), 1), "E  ·  Починить сервер", "Сервер в сети"), hint)
+    microwave = g.get("MicrowaveState")
+    pizza_action = words(g, g.eq(microwave, NO_SLICE), "E  ·  Поставить пиццу",
+                         words(g, g.eq(microwave, COLD), "E  ·  Снова разогреть",
+                               words(g, g.eq(microwave, HOT), "E  ·  Забрать пиццу", "Микроволновка греет")))
+    hint = words(g, g.both(g.eq(focus, KITCHEN), g.negate(locked)), pizza_action, hint)
+    text(g, words(g, g.gt(focus, -1), hint, ""), 282, 559, 0.98, TEAL)
+    text(g, microwave_label(g), 630, 559, 0.93, AMBER)
+    text(g, g.append("В руках  ·  ", cargo_label(g)), 29, 559, 0.93)
+    text(g, "WASD  идти     E  действие / удерживать     F  успокоить     Q  отменить", 29, 590, 0.88, MUTED)
+    text(g, "U  улучшения", 849, 590, 1.0, TEAL)
+    limit = g.call("InteractDuration", result="Value")
+    progress = g.clamp(g.div(g.get("HoldTime"), g.math("FMax", A=limit, B=0.01), True), 0.0, 1.0)
+    rect(g, 282, 578, g.mul(progress, 145.0, True), 3, AMBER)
+    g.call("DrawServicePanel")
+    ordinary = g.branch(g.get("RepairOpen"))
+    g.call("DrawRepair")
+    g.resume(ordinary)
+    g.guard(g.get("ShopOpen"))
+    g.call("DrawShop")
+    g.resume(inactive)
+    g.call("DrawOverlay")
+
+
 def draw_frame(g):
     width, height = as_real(g, g.get("Width")), as_real(g, g.get("Height"))
     g.set("UiScale", g.math("FMin", A=g.div(width, 1000.0, True), B=g.div(height, 620.0, True)))
     g.set("OriginX", g.mul(g.sub(width, scale(g, 1000.0), True), 0.5, True))
     g.set("OriginY", g.mul(g.sub(height, scale(g, 620.0), True), 0.5, True))
+    controller = g.invoke("HUD.GetOwningPlayerController", result="ReturnValue")
+    viewport_x, viewport_y = g.invoke("PlayerController.GetViewportSize", target=controller, result=("SizeX", "SizeY"))
+    # Canvas starts inside the camera's letterbox. The cursor uses the full viewport.
+    for member, viewport, canvas, origin in (
+        ("MouseOriginX", viewport_x, width, "OriginX"), ("MouseOriginY", viewport_y, height, "OriginY"),
+    ):
+        border = g.mul(g.sub(as_real(g, viewport), canvas, True), 0.5, True)
+        g.set(member, g.add(g.get(origin), border, True))
+    flat_view = g.branch(g.get("Scene3D"))
+    g.call("DrawSceneFrame")
+    g.resume(flat_view)
     g.invoke("HUD.DrawRect", RectColor=BG, ScreenX=0, ScreenY=0, ScreenW=width, ScreenH=height)
     g.call("DrawBoard")
     intro = g.branch(g.gt(g.get("Phase"), 0))
     g.call("DrawFloorObjects")
     g.call("DrawPlayer")
+    g.call("DrawServicePanel")
+    regular = g.branch(g.get("RepairOpen"))
+    g.call("DrawRepair")
+    g.resume(regular)
     results = g.branch(g.get("ShopOpen"))
     g.call("DrawShop")
     g.resume(results)
@@ -283,5 +405,6 @@ SCREEN_GRAPHS = (
     ("DrawRight", station_right, (("Station", "int"), ("Top", "real")) + LABEL),
     ("DrawQueue", draw_queue, ()), ("DrawFloorObjects", floor_objects, ()), ("DrawPlayer", draw_player, ()),
     ("DrawShop", draw_shop, ()),
+    ("DrawSceneFrame", draw_scene_frame, ()),
     ("DrawOverlay", overlay, ()), ("DrawFrame", draw_frame, (("Width", "int"), ("Height", "int"))),
 )

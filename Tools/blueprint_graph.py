@@ -63,7 +63,7 @@ class Graph:
         self.cursor = execution
 
     def invoke(self, name, *, result=None, native=True, target=None, **values):
-        path = ENGINE + name if native else name
+        path = ENGINE + name if native and not name.startswith("/") else name
         node = self.editor.add_call_function_node(path)
         if not node:
             raise ValueError(f"Cannot create call to {path}")
@@ -79,6 +79,8 @@ class Graph:
         if execution.is_valid():
             wire(execution, self.cursor)
             self.cursor = node.find_then_pin()
+        if isinstance(result, tuple):
+            return tuple(pin(node, output, True) for output in result)
         return pin(node, result, True) if result else None
 
     def call(self, name, **values):
@@ -90,8 +92,10 @@ class Graph:
         node = self.place(self.editor.add_get_member_variable_node(name), pure=True)
         return pin(node, name, True)
 
-    def set(self, name, value):
-        node = self.place(self.editor.add_set_member_variable_node(name))
+    def set(self, name, value, *, class_path="", target=None):
+        node = self.place(self.editor.add_set_member_variable_node(name, class_path))
+        if target is not None:
+            wire(node.find_self_pin(), target)
         wire(pin(node, name), value)
         wire(node.find_execute_pin(), self.cursor)
         self.cursor = node.find_then_pin()
