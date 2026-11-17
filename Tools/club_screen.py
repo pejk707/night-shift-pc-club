@@ -1,30 +1,37 @@
 """Build the Blueprint HUD and top-down club floor plan."""
 
 from club_rules import (
-    BROKEN, COLD, CRASH, DRINK, DRINK_NAMES, DURATION, ENERGY, FREE, FRIDGE, HEATING, HOT, KITCHEN,
-    LINE_SIZE, MAX_UPGRADE_LEVEL, MOUSE, NERVOUS, NO_SLICE, PIZZA, PLAYING, RECEPTION, SERVER, SLICE,
-    STOCK, SUPPLIES_NIGHT, UPGRADES, ceil_div, max_int, value_at_level, wallet,
+    BENCH, BROKEN, COLD, CRASH, DESKS, DRINK, DRINK_NAMES, DURATION, ENERGY, FREE, FRIDGE, HEATING,
+    HOT, KITCHEN, LINE_SIZE, MAX_UPGRADE_LEVEL, MOUSE, NERVOUS, NONE, NO_SLICE, PIZZA, PLAYING,
+    RECEPTION, SERVER, SLICE, STOCK, SUPPLIES_NIGHT, UPGRADES, ceil_div, max_int, min_int,
+    upgrade_effect, value_at_level, wallet,
 )
 
 
 def rgb(hexadecimal, alpha=1):
-    r, g, b = (int(hexadecimal[i:i + 2], 16) / 255 for i in (0, 2, 4))
+    def linear(channel):
+        return channel / 12.92 if channel <= 0.04045 else ((channel + 0.055) / 1.055) ** 2.4
+
+    r, g, b = (linear(int(hexadecimal[i:i + 2], 16) / 255) for i in (0, 2, 4))
     return f"(R={r:.6f},G={g:.6f},B={b:.6f},A={alpha:.6f})"
 
 
-BG = rgb("071018")
-FLOOR = rgb("121E2C")
-RAIL = rgb("27374C")
-CARD = rgb("162634")
-INSET = rgb("0A131D")
-MUTED = rgb("99AECB")
-WHITE = rgb("E7F2FB")
-BLUE = rgb("69DBFF")
-TEAL = rgb("64F1C5")
-PINK = rgb("FF658F")
-AMBER = rgb("FFCE7A")
-VIOLET = rgb("AE99FF")
-OVERLAY = rgb("060C14", 0.92)
+BG = rgb("0B1019")
+FLOOR = rgb("172439")
+RAIL = rgb("354A60")
+CARD = rgb("142131")
+INSET = rgb("0C1724")
+MUTED = rgb("BBC9DA")
+WHITE = rgb("F5F8FD")
+BLUE = rgb("7DD8FF")
+TEAL = rgb("62F2CF")
+PINK = rgb("FF8199")
+AMBER = rgb("FFD27E")
+VIOLET = rgb("CCB7FF")
+OVERLAY = rgb("080E17", 0.77)
+HUD_FACE = rgb("101C2B", 0.97)
+SHADOW = rgb("030810", 0.55)
+FONT = "/Engine/EngineFonts/Roboto.Roboto"
 
 
 def as_real(g, value):
@@ -42,7 +49,13 @@ def rect(g, x, y, w, h, color):
 
 def text(g, value, x, y, size=1.0, color=WHITE):
     g.invoke("HUD.DrawText", Text=value, TextColor=color, ScreenX=g.add(g.get("OriginX"), scale(g, x), True),
-             ScreenY=g.add(g.get("OriginY"), scale(g, y), True), Scale=scale(g, size), bScalePosition=False)
+             ScreenY=g.add(g.get("OriginY"), scale(g, y), True), Font=FONT,
+             Scale=scale(g, size), bScalePosition=False)
+
+
+def text_right(g, value, right, y, size=1.0, color=WHITE):
+    width = g.invoke("HUD.GetTextSize", result="OutWidth", Text=value, Font=FONT, Scale=size)
+    text(g, value, g.sub(right, width, True), y, size, color)
 
 
 def offset(g, coord, by):
@@ -91,6 +104,29 @@ def panel(g, x, y, width, height, selected=False):
     rect(g, offset(g, x, 2.0), offset(g, y, 2.0), width - 4, height - 4, CARD)
 
 
+def surface(g, x, y, width, height, *, stroke=RAIL, face=HUD_FACE):
+    rect(g, offset(g, x, 2.0), offset(g, y, 4.0), width, height, SHADOW)
+    rect(g, x, y, width, height, stroke)
+    rect(g, offset(g, x, 1.0), offset(g, y, 1.0), width - 2, height - 2, face)
+
+
+def keycap(g, key, x, y, width=22, *, tint=BLUE, height=20):
+    rect(g, x, y, width, height, RAIL)
+    rect(g, offset(g, x, 1.0), offset(g, y, 1.0), width - 2, height - 3, INSET)
+    text(g, key, offset(g, x, 5.0), offset(g, y, 2.0), 0.91, tint)
+
+
+def progress_bar(g, x, y, width, ratio, tint, height=3):
+    rect(g, x, y, width, height, RAIL)
+    rect(g, x, y, g.mul(g.clamp(ratio, 0.0, 1.0), width, True), height, tint)
+
+
+def modal_surface(g, x, y, width, height, accent):
+    rect(g, 0, 0, 1000, 620, OVERLAY)
+    surface(g, x, y, width, height, face=CARD)
+    rect(g, offset(g, x, 1.0), offset(g, y, 1.0), width - 2, 3, accent)
+
+
 def clock(g):
     total_minutes = g.add(22 * 60, g.div(g.mul(g.get("Step"), 480), DURATION))
     hours, minutes = g.mod(g.div(total_minutes, 60), 24), g.mod(total_minutes, 60)
@@ -100,19 +136,23 @@ def clock(g):
 
 
 def draw_header(g):
-    text(g, "НОЧНАЯ СМЕНА", 29, 22, 2.0)
-    text(g, "КОМПЬЮТЕРНЫЙ КЛУБ", 32, 55, 0.82, MUTED)
+    surface(g, 18, 10, 964, 76)
+    rect(g, 34, 22, 3, 35, TEAL)
+    text(g, "Ночная смена", 47, 20, 1.95)
+    text(g, g.append("Смена ", g.string(g.get("ShiftNo")), " из 3"), 48, 48, 0.99, MUTED)
+    progress_bar(g, 48, 69, 183, g.div(as_real(g, g.get("Step")), DURATION, True), TEAL)
+    cash, goal = g.get("Cash"), g.get("Goal")
+    for divider in (254, 397, 627, 793):
+        rect(g, divider, 27, 1, 43, RAIL)
     for title, value, x, tint in (
-        ("СМЕНА", g.append(g.string(g.get("ShiftNo")), " / 3"), 288, WHITE),
-        ("ЧАСЫ", clock(g), 405, BLUE),
-        ("ВЫРУЧКА / ПЛАН", g.append(g.string(g.get("Cash")), " / ", g.string(g.get("Goal"))), 522, TEAL),
-        ("РЕЙТИНГ", g.append(g.string(g.get("Rating")), " / 5"), 718, AMBER),
-        ("УШЛО В ЯРОСТИ", g.string(g.get("Lost")), 838, PINK),
+        ("Время", clock(g), 273, WHITE),
+        ("Выручка / план", g.append(g.string(cash), " / ", g.string(goal)), 416, TEAL),
+        ("Рейтинг", g.append(g.string(g.get("Rating")), " / 5"), 648, AMBER),
+        ("Ушли в ярости", g.string(g.get("Lost")), 815, color_when(g, g.gt(g.get("Lost"), 0), PINK, WHITE)),
     ):
-        text(g, title, x, 25, 0.85, MUTED)
-        text(g, value, x, 46, 1.5, tint)
-    rect(g, 28, 84, 944, 3, RAIL)
-    rect(g, 28, 84, g.div(g.mul(as_real(g, g.get("Step")), 944.0, True), DURATION, True), 3, TEAL)
+        text(g, title, x, 23, 1.0, MUTED)
+        text(g, value, x, 39, 1.83, tint)
+    progress_bar(g, 417, 70, 166, g.div(as_real(g, cash), as_real(g, goal), True), TEAL)
 
 
 def board(g):
@@ -239,33 +279,35 @@ def overlay(g):
     phase = g.get("Phase")
     intro = g.eq(phase, 0)
     won = g.either(g.eq(phase, 2), g.eq(phase, 4))
-    rect(g, 30, 105, 940, 446, OVERLAY)
-    panel(g, 218, 159, 565, 322)
-    rect(g, 218, 159, 565, 4, color_when(g, intro, BLUE, color_when(g, won, TEAL, PINK)))
+    modal_surface(g, 218, 151, 565, 326, color_when(g, intro, BLUE, color_when(g, won, TEAL, PINK)))
     title = words(g, g.eq(phase, 4), "Три смены закрыты", words(g, won, "План выполнен", "Смена провалена"))
-    text(g, words(g, intro, "Дневной админ ушёл.", title), 247, 188, 2.2)
+    text(g, words(g, intro, "Дневной админ ушёл", title), 248, 178, 2.28)
     summary = g.branch(intro)
-    text(g, "До 06:00 клуб на тебе. Посади гостей, обслужи ряд и спаси рейтинг.", 249, 249, 0.98, MUTED)
-    text(g, "1. Подойди к гостю в очереди и нажми E.", 249, 289, 1.04)
-    text(g, "2. Выбери свободный ПК и нажми E снова.", 249, 319, 1.04)
-    text(g, "3. Красная шкала — тильт. Рядом с гостем нажми F.", 249, 349, 1.04)
-    text(g, "ENTER   Начать смену", 249, 421, 1.25, TEAL)
+    text(g, "Выполни план выручки и сохрани рейтинг к 06:00.", 249, 227, 1.12, MUTED)
+    for key, y, copy in (
+        ("E", 274, words(g, g.get("Scene3D"), "Зайди за стойку и позови гостя.", "Позови гостя у стойки.")),
+        ("E", 309, "Подойди к свободному ПК и посади гостя."),
+        ("F", 344, "Успокой гостя, когда шкала загорится красным."),
+    ):
+        keycap(g, key, 249, y)
+        text(g, copy, 284, y, 1.05)
+    keycap(g, "Enter", 249, 418, 46, tint=TEAL, height=23)
+    text(g, "Начать смену", 310, 416, 1.28, TEAL)
     g.resume(summary)
     text(g, g.append("Выручка   ", g.string(g.get("Cash")), " / ", g.string(g.get("Goal"))), 249, 248, 1.18, TEAL)
     text(g, g.append("Рейтинг   ", g.string(g.get("Rating")), " / 5"), 249, 280, 1.12, AMBER)
     text(g, g.append("Ушли в ярости   ", g.string(g.get("Lost")), "     Обслужено   ", g.string(g.get("Served"))), 249, 314, 1.06)
     prompt = words(g, g.eq(phase, 4), "Начать заново", words(g, won, "Следующая смена", "Повторить смену"))
-    text(g, g.append("ENTER   ", prompt), 249, 421, 1.25, TEAL)
+    keycap(g, "Enter", 249, 418, 46, tint=TEAL, height=23)
+    text(g, prompt, 310, 416, 1.28, TEAL)
 
 
 def draw_shop(g):
-    rect(g, 30, 105, 940, 446, OVERLAY)
-    panel(g, 137, 118, 726, 420)
-    rect(g, 137, 118, 726, 4, TEAL)
-    text(g, "Улучшения клуба", 164, 138, 1.8)
+    modal_surface(g, 137, 112, 726, 431, TEAL)
+    text(g, "Улучшения клуба", 163, 132, 1.95)
     balance = wallet(g)
     text(g, g.append("В кассе ", g.string(balance)), 629, 143, 1.06, TEAL)
-    text(g, "1–5   Купить следующий уровень", 164, 173, 0.9, MUTED)
+    text(g, "Нажми 1–5, чтобы купить уровень", 164, 171, 1.02, MUTED)
     rect(g, 164, 194, 672, 1, RAIL)
     for index, upgrade in enumerate(UPGRADES, start=1):
         y = 204 + (index - 1) * 57
@@ -279,80 +321,203 @@ def draw_shop(g):
         cost = g.append("Цена ", g.string(price))
         shortage = g.append(" · не хватает ", g.string(g.sub(price, balance)))
         status = words(g, maxed, "Максимум", g.append(cost, words(g, affordable, "", shortage)))
-        text(g, f"{index}   {upgrade.title}", 164, y, 1.1)
+        keycap(g, str(index), 165, y + 2)
+        text(g, upgrade.title, 198, y, 1.16)
         text(g, g.append(upgrade.effect, " · ", g.string(current_effect), upgrade.unit, change),
-             164, y + 24, 0.86, MUTED)
+             198, y + 24, 0.93, MUTED)
         text(g, g.append("Уровень ", g.string(level), f" / {MAX_UPGRADE_LEVEL}"), 629, y, 0.98)
         text(g, status, 629, y + 24, 0.88,
              color_when(g, maxed, TEAL, color_when(g, affordable, AMBER, MUTED)))
         rect(g, 164, y + 47, 672, 1, RAIL)
-    text(g, "U   Вернуться в клуб", 164, 503, 1.04, TEAL)
+    keycap(g, "U", 164, 504, tint=TEAL)
+    text(g, "Вернуться в клуб", 199, 503, 1.11, TEAL)
     text(g, "Смена на паузе", 629, 503, 0.9, MUTED)
 
 
+def draw_scene_pc_status(g):
+    desk = g.get("Desk")
+    anchor = g.arr("PcStatusAnchors", desk)
+    g.guard(g.gt(g.math("VSizeSquared", A=anchor), 1.0, True))
+    projected = g.invoke("HUD.Project", result="ReturnValue", Location=anchor)
+    px, py, depth = g.invoke("KismetMathLibrary.BreakVector", result=("X", "Y", "Z"), InVec=projected)
+    g.guard(g.gt(depth, 0.0, True))
+    # HUD.Project already uses the same camera canvas as DrawText and DrawRect.
+    center_x = g.div(g.sub(px, g.get("OriginX"), True), g.get("UiScale"), True)
+    center_y = g.div(g.sub(py, g.get("OriginY"), True), g.get("UiScale"), True)
+    left, top = offset(g, center_x, -38.0), offset(g, center_y, -18.0)
+
+    state = g.arr("DeskState", desk)
+    open_pc = g.lt(desk, g.get("Places"))
+    offline = g.eq(g.get("ServerDown"), 1)
+    restarting = g.gt(g.arr("RestartUntil", desk), 0)
+    playing = words(g, offline, "Нет сети", "Играет")
+    crash = words(g, restarting, "Запуск", "Вылет")
+    label = "Пицца"
+    for value, name in ((FREE, "Свободен"), (PLAYING, playing), (CRASH, crash),
+                        (ENERGY, drink_label(g, g.arr("RequestVariant", desk))), (BROKEN, "Мышь")):
+        label = words(g, g.eq(state, value), name, label)
+    patience = g.arr("Patience", desk)
+    pending = g.both(open_pc, g.both(g.gt(state, PLAYING), g.negate(g.eq(state, BROKEN))))
+    urgent = g.both(pending, g.lt(patience, 30))
+    danger = g.either(urgent, g.either(g.eq(state, BROKEN), g.both(offline, g.eq(state, PLAYING))))
+    state_color = color_when(g, danger, PINK, color_when(g, pending, AMBER, TEAL))
+    state_color = color_when(g, open_pc, state_color, MUTED)
+    focus = g.both(open_pc, g.eq(g.get("Focus"), desk))
+    surface(g, left, top, 76, 36, stroke=color_when(g, focus, TEAL, RAIL))
+    rect(g, offset(g, left, 1.0), offset(g, top, 5.0), 2, 26, state_color)
+    show_time = g.both(pending, g.negate(restarting))
+    label_y = offset(g, top, g.choose(show_time, 3.0, 9.0, "Float"))
+    tint = color_when(g, open_pc, WHITE, MUTED)
+    text(g, words(g, open_pc, label, "Закрыт"), offset(g, left, 7.0), label_y, 0.96, tint)
+    g.guard(show_time)
+    seconds = request_seconds(g, desk)
+    text_right(g, g.append(g.string(seconds), " с"), offset(g, left, 69.0), offset(g, top, 18.0), 0.95, state_color)
+    progress_bar(g, offset(g, left, 7.0), offset(g, top, 27.0), 30,
+                 g.div(as_real(g, patience), 100.0, True), state_color)
+
+
+def draw_scene_queue_row(g):
+    slot = g.get("Slot")
+    mood = g.arr("LineMood", slot)
+    g.guard(g.gt(mood, 0))
+    waiting = g.arr("LineWait", slot)
+    y = g.add(139.0, g.mul(as_real(g, slot), 33.0, True), True)
+    selected = g.both(g.eq(slot, 0), g.gt(g.get("Guest"), 0))
+    nervous = g.eq(mood, NERVOUS)
+    title = words(g, nervous, "Нервный", "Спокойный")
+    tint = color_when(g, g.lt(waiting, 81), PINK, color_when(g, nervous, VIOLET, TEAL))
+    rect(g, 30, offset(g, y, 5.0), 4, 9, tint)
+    text(g, words(g, selected, "Гость выбран", title), 40, y, 0.98)
+    text_right(g, g.append(g.string(ceil_div(g, waiting, 10)), " с"), 155, y, 0.92, tint)
+    base = g.choose(nervous, 240, 300)
+    budget = g.add(base, g.mul(upgrade_effect(g, BENCH), 10))
+    progress_bar(g, 40, offset(g, y, 20.0), 115, g.div(as_real(g, waiting), as_real(g, budget), True), tint, 2)
+
+
+def draw_scene_queue(g):
+    focus = g.eq(g.get("Focus"), RECEPTION)
+    stroke = color_when(g, focus, TEAL, RAIL)
+    empty = g.eq(g.arr("LineMood", 0), 0)
+    one = g.eq(g.arr("LineMood", 1), 0)
+    no_line = g.branch(empty)
+    surface(g, 18, 105, 150, 63, stroke=stroke)
+    text(g, "Очередь", 30, 113, 1.17)
+    text(g, "Пусто", 30, 140, 1.02, MUTED)
+    g.resume(no_line)
+    full = g.branch(one)
+    surface(g, 18, 105, 150, 68, stroke=stroke)
+    text(g, "Очередь", 30, 113, 1.17)
+    g.call("DrawSceneQueueRow", Slot=0)
+    g.resume(full)
+    surface(g, 18, 105, 150, 102, stroke=stroke)
+    text(g, "Очередь", 30, 113, 1.17)
+    for slot in range(LINE_SIZE):
+        g.call("DrawSceneQueueRow", Slot=slot)
+
+
+def draw_scene_action(g):
+    focus = g.get("Focus")
+    g.guard(g.gt(focus, -1))
+    online_server = g.both(g.eq(focus, SERVER), g.eq(g.get("ServerDown"), 0))
+    g.guard(g.negate(online_server))
+    desk = min_int(g, max_int(g, 0, focus), DESKS - 1)
+    pc = g.lt(focus, DESKS)
+    item = g.get("HeldItem")
+    empty = g.eq(item, NONE)
+    state = g.arr("DeskState", desk)
+    drink = g.arr("RequestVariant", desk)
+    drink_name = drink_label(g, drink)
+    has_drink = g.both(g.eq(item, DRINK), g.eq(g.get("HeldDrink"), drink))
+    has_slice = g.eq(item, SLICE)
+    has_mouse = g.eq(item, MOUSE)
+    seating = g.gt(g.get("Guest"), 0)
+    booting = g.gt(g.arr("RestartUntil", desk), 0)
+    available = g.lt(desk, g.get("Places"))
+    title = g.append("ПК ", g.string(g.add(desk, 1)))
+    action = "Свободен"
+    enabled = seating
+    for kind, label, can_act in (
+        (FREE, words(g, seating, "Посадить гостя", "Свободен"), seating),
+        (PLAYING, words(g, g.eq(g.get("ServerDown"), 1), "Нет сети", "Играет"), False),
+        (CRASH, words(g, booting, "Игра запускается", "Открыть диагностику"), g.negate(booting)),
+        (ENERGY, words(g, has_drink, "Отдать энергетик", g.append("Нужен энергетик · ", drink_name)), has_drink),
+        (PIZZA, words(g, has_slice, "Отдать пиццу", "Заказ · кусок пиццы"), has_slice),
+        (BROKEN, words(g, has_mouse, "Удерживай, чтобы заменить мышь", "Нужна запасная мышь"), has_mouse),
+    ):
+        matches = g.eq(state, kind)
+        action = words(g, matches, label, action)
+        enabled = g.either(g.both(matches, can_act), g.both(g.negate(matches), enabled))
+    action = words(g, available, action, "Пока недоступен")
+    enabled = g.both(pc, g.both(enabled, available))
+
+    fridge_ready = g.either(empty, g.eq(item, DRINK))
+    waiting_guest = g.gt(g.arr("LineMood", 0), 0)
+    supplies = g.negate(g.lt(g.get("ShiftNo"), SUPPLIES_NIGHT))
+    offline = g.eq(g.get("ServerDown"), 1)
+    microwave = g.get("MicrowaveState")
+    hot = g.eq(microwave, HOT)
+    heating = g.eq(microwave, HEATING)
+    can_use_microwave = g.both(g.negate(heating), g.either(empty, g.negate(hot)))
+    pizza = words(g, g.eq(microwave, NO_SLICE), "Поставить пиццу",
+                  words(g, g.eq(microwave, COLD), "Снова разогреть",
+                        words(g, hot, words(g, empty, "Забрать пиццу", "Освободи руки"), "Микроволновка греет")))
+    for station, label, hint, can_act in (
+        (RECEPTION, "Стойка", words(g, waiting_guest, "Позвать гостя", "Очередь пуста"), waiting_guest),
+        (FRIDGE, "Холодильник", words(g, fridge_ready, "Выбрать энергетик", "Освободи руки"), fridge_ready),
+        (STOCK, "Склад", words(g, supplies, words(g, empty, "Взять мышь", "Освободи руки"), "Со второй смены"),
+         g.both(supplies, empty)),
+        (SERVER, "Сервер", words(g, offline, "Открыть панель ремонта", "Сервер в сети"), offline),
+        (KITCHEN, "Снэк-бар", words(g, supplies, pizza, "Со второй смены"), g.both(supplies, can_use_microwave)),
+    ):
+        matches = g.eq(focus, station)
+        title = words(g, matches, label, title)
+        action = words(g, matches, hint, action)
+        enabled = g.either(enabled, g.both(matches, can_act))
+
+    surface(g, 258, 547, 483, 46, stroke=color_when(g, enabled, TEAL, RAIL))
+    text(g, title, 271, 551, 0.89, MUTED)
+    x = g.choose(enabled, 302.0, 271.0, "Float")
+    text(g, action, x, 568, 1.1)
+    active = g.branch(enabled)
+    keycap(g, "E", 270, 568, tint=TEAL, height=18)
+    g.resume(active)
+    limit = g.call("InteractDuration", result="Value")
+    holding = g.both(g.gt(limit, 0.0, True), g.gt(g.get("HoldTime"), 0.0, True))
+    g.guard(g.both(enabled, holding))
+    progress_bar(g, 604, 574, 120, g.div(g.get("HoldTime"), limit, True), AMBER, 5)
+
+
+def draw_scene_controls(g):
+    surface(g, 18, 547, 224, 46)
+    text(g, "В руках", 32, 551, 0.89, MUTED)
+    text(g, cargo_label(g), 32, 568, 1.13)
+    g.call("DrawSceneAction")
+    surface(g, 757, 547, 225, 46)
+    offline = g.eq(g.get("ServerDown"), 1)
+    color = color_when(g, offline, PINK, TEAL)
+    text(g, "Сервер", 771, 551, 0.89, MUTED)
+    rect(g, 771, 574, 6, 6, color)
+    text(g, words(g, offline, "Отключён", "В сети"), 783, 569, 1.06, color)
+    rect(g, 865, 557, 1, 27, RAIL)
+    keycap(g, "U", 874, 563, 20, tint=TEAL, height=19)
+    text(g, "Улучшения", 900, 564, 1.0)
+    for key, label, x, width in (
+        ("WASD", "Движение", 18, 48),
+        ("F", "Успокоить", 158, 21),
+        ("Q", "Отмена", 270, 21),
+    ):
+        keycap(g, key, x, 600, width)
+        text(g, label, x + width + 7, 602, 0.94, MUTED)
+    text(g, microwave_label(g), 532, 601, 1.0, AMBER)
+
+
 def draw_scene_frame(g):
-    rect(g, 0, 0, 1000, 93, OVERLAY)
     draw_header(g)
     inactive = g.branch(g.eq(g.get("Phase"), 1))
-    rect(g, 18, 106, 147, 105, OVERLAY)
-    text(g, "ОЧЕРЕДЬ", 28, 117, 0.85, BLUE)
-    for slot in range(LINE_SIZE):
-        mood = g.arr("LineMood", slot)
-        name = words(g, g.eq(mood, NERVOUS), "Нервный", "Спокойный")
-        seconds = g.string(g.div(g.add(g.arr("LineWait", slot), 9), 10))
-        line = words(g, g.gt(mood, 0), g.append(name, " · ", seconds, " с"), "Пусто" if slot == 0 else "")
-        text(g, line, 28, 144 + 24 * slot, 0.86)
-    rect(g, 820, 106, 162, 275, OVERLAY)
-    text(g, "КОМПЬЮТЕРЫ", 831, 117, 0.85, BLUE)
-    for index in range(8):
-        state = g.arr("DeskState", index)
-        open_pc = g.lt(index, g.get("Places"))
-        playing = words(g, g.eq(g.get("ServerDown"), 1), "Нет сети", "Играет")
-        crash = words(g, g.gt(g.arr("RestartUntil", index), 0), "Запуск", "Вылет")
-        label = "Пицца"
-        for value, name in ((FREE, "Свободен"), (PLAYING, playing), (CRASH, crash),
-                            (ENERGY, drink_label(g, g.arr("RequestVariant", index))), (BROKEN, "Мышь")):
-            label = words(g, g.eq(state, value), name, label)
-        tint = color_when(g, g.gt(state, PLAYING), AMBER, MUTED)
-        tint = color_when(g, g.eq(g.get("Focus"), index), TEAL, tint)
-        y = 143 + 26 * index
-        text(g, f"{index + 1}", 831, y, 0.85, tint)
-        text(g, words(g, open_pc, label, "Закрыт"), 852, y, 0.85, tint)
-        request = g.both(g.gt(state, PLAYING), g.negate(g.eq(state, BROKEN)))
-        seconds = request_seconds(g, index)
-        show_time = g.both(request, g.eq(g.arr("RestartUntil", index), 0))
-        text(g, words(g, show_time, g.append(g.string(seconds), " с"), ""), 946, y, 0.72,
-             color_when(g, g.lt(seconds, 11), PINK, MUTED))
-        width = g.mul(as_real(g, g.choose(request, g.arr("Patience", index), 0)), 0.96, True)
-        rect(g, 852, y + 16, width, 2, tint)
-    text(g, words(g, g.gt(g.get("ServerDown"), 0), "Сервер отключён", "Сервер в сети"), 831, 354, 0.78,
-         color_when(g, g.gt(g.get("ServerDown"), 0), PINK, TEAL))
-
-    rect(g, 0, 547, 1000, 73, OVERLAY)
-    focus = g.get("Focus")
-    pc = g.both(g.gt(focus, -1), g.lt(focus, 8))
-    nearby = words(g, pc, g.append("ПК ", g.string(g.add(focus, 1))), "")
-    for station, name in ((RECEPTION, "Стойка"), (FRIDGE, "Холодильник"), (STOCK, "Склад"),
-                          (SERVER, "Сервер"), (KITCHEN, "Снэк-бар")):
-        nearby = words(g, g.eq(focus, station), name, nearby)
-    supply = g.either(g.eq(focus, STOCK), g.eq(focus, KITCHEN))
-    locked = g.both(supply, g.lt(g.get("ShiftNo"), SUPPLIES_NIGHT))
-    hint = words(g, locked, g.append(nearby, " · со второй смены"), g.append("E  ·  ", nearby))
-    hint = words(g, g.eq(focus, SERVER),
-                 words(g, g.eq(g.get("ServerDown"), 1), "E  ·  Починить сервер", "Сервер в сети"), hint)
-    microwave = g.get("MicrowaveState")
-    pizza_action = words(g, g.eq(microwave, NO_SLICE), "E  ·  Поставить пиццу",
-                         words(g, g.eq(microwave, COLD), "E  ·  Снова разогреть",
-                               words(g, g.eq(microwave, HOT), "E  ·  Забрать пиццу", "Микроволновка греет")))
-    hint = words(g, g.both(g.eq(focus, KITCHEN), g.negate(locked)), pizza_action, hint)
-    text(g, words(g, g.gt(focus, -1), hint, ""), 282, 559, 0.98, TEAL)
-    text(g, microwave_label(g), 630, 559, 0.93, AMBER)
-    text(g, g.append("В руках  ·  ", cargo_label(g)), 29, 559, 0.93)
-    text(g, "WASD  идти     E  действие / удерживать     F  успокоить     Q  отменить", 29, 590, 0.88, MUTED)
-    text(g, "U  улучшения", 849, 590, 1.0, TEAL)
-    limit = g.call("InteractDuration", result="Value")
-    progress = g.clamp(g.div(g.get("HoldTime"), g.math("FMax", A=limit, B=0.01), True), 0.0, 1.0)
-    rect(g, 282, 578, g.mul(progress, 145.0, True), 3, AMBER)
+    g.call("DrawSceneQueue")
+    for index in range(DESKS):
+        g.call("DrawScenePcStatus", Desk=index)
+    g.call("DrawSceneControls")
     g.call("DrawServicePanel")
     ordinary = g.branch(g.get("RepairOpen"))
     g.call("DrawRepair")
@@ -406,5 +571,10 @@ SCREEN_GRAPHS = (
     ("DrawQueue", draw_queue, ()), ("DrawFloorObjects", floor_objects, ()), ("DrawPlayer", draw_player, ()),
     ("DrawShop", draw_shop, ()),
     ("DrawSceneFrame", draw_scene_frame, ()),
+    ("DrawScenePcStatus", draw_scene_pc_status, (("Desk", "int"),)),
+    ("DrawSceneQueue", draw_scene_queue, ()),
+    ("DrawSceneQueueRow", draw_scene_queue_row, (("Slot", "int"),)),
+    ("DrawSceneControls", draw_scene_controls, ()),
+    ("DrawSceneAction", draw_scene_action, ()),
     ("DrawOverlay", overlay, ()), ("DrawFrame", draw_frame, (("Width", "int"), ("Height", "int"))),
 )

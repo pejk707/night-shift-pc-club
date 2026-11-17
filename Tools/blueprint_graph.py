@@ -16,6 +16,10 @@ def pin_type(kind):
         return LIB.get_array_type(pin_type(kind[:-2]))
     if kind == "color":
         return LIB.get_struct_type(unreal.LinearColor.static_struct())
+    if kind == "vector":
+        return LIB.get_struct_type(unreal.Vector.static_struct())
+    if kind == "actor":
+        return LIB.get_object_reference_type(unreal.Actor.static_class())
     return LIB.get_basic_type_by_name(kind)
 
 

@@ -12,6 +12,7 @@ import unreal
 TOOLS_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(TOOLS_DIR))
 from blueprint_graph import EDIT, LIB, Graph, pin, pin_type
+from club_guests import GUEST_ACTOR_ARRAYS, GUEST_GRAPHS, GUEST_VECTOR_ARRAYS, RESET_INTS
 from club_rules import (
     BELL_PATH, BOOL_DEFAULTS, DESK_ARRAYS, INT_DEFAULTS, LINE_ARRAYS, REAL_DEFAULTS, RULE_GRAPHS, SCENE_ARRAYS,
     start_simulation,
@@ -80,8 +81,10 @@ def create_hud(save=True):
         ("int", INT_DEFAULTS | WIRE_INT_DEFAULTS | SERVICE_INT_DEFAULTS),
         ("real", REAL_DEFAULTS | WIRE_REAL_DEFAULTS),
         ("bool", BOOL_DEFAULTS | WIRE_BOOL_DEFAULTS),
-        ("int[]", dict.fromkeys(DESK_ARRAYS + LINE_ARRAYS + ("WireConnected",), "")),
+        ("int[]", dict.fromkeys(DESK_ARRAYS + LINE_ARRAYS + ("WireConnected",) + tuple(RESET_INTS), "")),
         ("real[]", dict.fromkeys(SCENE_ARRAYS, "")),
+        ("vector[]", dict.fromkeys(("PcStatusAnchors",) + GUEST_VECTOR_ARRAYS, "")),
+        ("actor[]", dict.fromkeys(GUEST_ACTOR_ARRAYS, "")),
     ):
         kind = pin_type(type_name)
         for name, value in defaults.items():
@@ -89,7 +92,7 @@ def create_hud(save=True):
             require(events.add_member_variable(name, kind, literal), f"Could not add variable {name}")
 
     writers = []
-    for name, writer, params, *result in RULE_GRAPHS + SCREEN_GRAPHS + WIRE_GRAPHS + SERVICE_GRAPHS:
+    for name, writer, params, *result in RULE_GRAPHS + SCREEN_GRAPHS + WIRE_GRAPHS + SERVICE_GRAPHS + GUEST_GRAPHS:
         graph = Graph(require(EDIT.create_and_edit_function_graph(bp, name), f"Could not create {name}"))
         for param, kind in params:
             require(graph.editor.add_graph_input_parameter(param, pin_type(kind)).is_valid(), f"Could not add {name}.{param}")

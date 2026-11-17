@@ -1,7 +1,7 @@
 """Blueprint graphs for the server patch panel and its mouse interaction."""
 
 from club_rules import rand, within
-from club_screen import AMBER, MUTED, OVERLAY, TEAL, panel, rect, rgb, scale, text, words
+from club_screen import AMBER, MUTED, PINK, RAIL, TEAL, keycap, modal_surface, rect, rgb, scale, surface, text, words
 
 COLORS = tuple(map(rgb, ("FF4866", "55BFFF", "FFD15F", "DC7AFF")))
 PORTS = len(COLORS)
@@ -171,13 +171,11 @@ def draw_port(g):
 
 
 def draw_repair(g):
-    rect(g, 0, 0, 1000, 620, OVERLAY)
-    panel(g, 217, 92, 566, 444)
-    rect(g, 217, 92, 566, 4, rgb("FF4866"))
-    text(g, "Панель ремонта сервера", 242, 111, 1.55)
-    text(g, "Перетащи провод или нажми на два разъёма одного цвета.", 242, 151, 0.94, MUTED)
-    rect(g, 730, 102, 38, 38, rgb("293E4F"))
-    text(g, "×", 741, 104, 1.45)
+    modal_surface(g, 217, 92, 566, 444, PINK)
+    text(g, "Ремонт сервера", 242, 111, 1.88)
+    text(g, "Перетащи провод или нажми на два разъёма одного цвета.", 242, 151, 1.02, MUTED)
+    surface(g, 730, 102, 38, 38, stroke=RAIL)
+    text(g, "×", 742, 105, 1.42)
     rect(g, 247, 183, 506, 281, rgb("11171C"))
     for x in (264, 682):
         rect(g, x, 186, 54, 275, rgb("34414D"))
@@ -194,7 +192,8 @@ def draw_repair(g):
     count = g.append("Соединено ", g.string(g.get("WireCount")), f" из {PORTS}")
     text(g, count, 247, 490, 1.0, TEAL)
     text(g, words(g, g.get("WireMismatch"), "Цвета не совпадают", ""), 425, 490, 0.95, AMBER)
-    text(g, "Q  закрыть", 663, 490, 0.95, MUTED)
+    keycap(g, "Q", 663, 488)
+    text(g, "Закрыть", 693, 490, 0.98, MUTED)
 
 
 WIRE_GRAPHS = (

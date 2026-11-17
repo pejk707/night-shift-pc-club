@@ -5,8 +5,8 @@ from club_rules import (
     NO_SLICE, PC_PANEL, REPAIR_KIT, SLICE, SUPPLIES_NIGHT, ceil_div, max_int, upgrade_effect, within,
 )
 from club_screen import (
-    AMBER, BLUE, CARD, INSET, MUTED, OVERLAY, PINK, RAIL, TEAL, VIOLET, WHITE,
-    color_when, drink_label, panel, rect, rgb, text, words,
+    AMBER, BLUE, CARD, INSET, MUTED, PINK, RAIL, TEAL, VIOLET, WHITE,
+    color_when, drink_label, keycap, modal_surface, rect, rgb, surface, text, words,
 )
 
 MICROWAVE_SOUND = "/Game/NightShift/Audio/S_MicrowaveReady"
@@ -166,24 +166,24 @@ def service_input(g):
 
 
 def service_shell(g, title, subtitle, color):
-    rect(g, 0, 0, 1000, 620, OVERLAY)
-    panel(g, 218, 122, 564, 373)
-    rect(g, 218, 122, 564, 4, color)
-    text(g, title, 247, 143, 1.62, WHITE)
-    text(g, subtitle, 247, 184, 0.90, MUTED)
+    modal_surface(g, 218, 122, 564, 373, color)
+    text(g, title, 247, 142, 1.9)
+    text(g, subtitle, 247, 183, 1.03, MUTED)
     x, y, w, h = CLOSE
-    rect(g, x - w / 2, y - h / 2, w, h, RAIL)
+    surface(g, x - w / 2, y - h / 2, w, h, stroke=color_when(g, pointer_hit(g, CLOSE), color, RAIL))
     text(g, "×", x - 7, y - 16, 1.32, WHITE)
-    text(g, "Q  закрыть", 663, 464, 0.91, MUTED)
+    keycap(g, "Q", 663, 463, 22)
+    text(g, "Закрыть", 693, 464, 0.95, MUTED)
 
 
-def service_button(g, box, title, *, tint=TEAL, enabled=True):
+def service_button(g, box, key, title, *, tint=TEAL, enabled=True):
     x, y, w, h = box
     hover = g.both(enabled, pointer_hit(g, box))
     left, top = x - w / 2, y - h / 2
-    rect(g, left, top, w, h, color_when(g, hover, tint, RAIL))
-    rect(g, left + 2, top + 2, w - 4, h - 4, color_when(g, enabled, CARD, INSET))
-    text(g, title, left + 12, y - 9, 1.04, color_when(g, enabled, WHITE, MUTED))
+    surface(g, left, top, w, h, stroke=color_when(g, hover, tint, RAIL),
+            face=color_when(g, enabled, CARD, INSET))
+    keycap(g, key, left + 13, y - 10.0)
+    text(g, title, left + 47, y - 10, 1.12, color_when(g, enabled, WHITE, MUTED))
 
 
 def draw_fridge(g):
@@ -191,15 +191,15 @@ def draw_fridge(g):
     for index, (name, box, tint) in enumerate(zip(DRINK_NAMES, FRIDGE_BUTTONS, CAN_TINTS), 1):
         x, y, w, h = box
         border = color_when(g, pointer_hit(g, box), tint, RAIL)
-        rect(g, x - w / 2, y - h / 2, w, h, border)
-        rect(g, x - w / 2 + 2, y - h / 2 + 2, w - 4, h - 4, INSET)
+        surface(g, x - w / 2, y - h / 2, w, h, stroke=border, face=INSET)
         rect(g, x - 13, y - 42, 26, 54, tint)
         rect(g, x - 10, y - 45, 20, 4, rgb("A6C0CB"))
         rect(g, x - 13, y - 23, 26, 16, rgb("112139"))
-        text(g, f"{index}  {name}", x - w / 2 + 12, y + 29, 0.96, WHITE)
+        keycap(g, str(index), x - w / 2 + 11, y + 29, tint=tint)
+        text(g, name, x - w / 2 + 42, y + 29, 1.03)
     g.guard(g.eq(g.get("HeldItem"), DRINK))
     text(g, g.append("В руках  ·  ", drink_label(g, g.get("HeldDrink"))), 247, 367, 0.9, BLUE)
-    service_button(g, RETURN_BUTTON, "4  Вернуть банку", tint=BLUE)
+    service_button(g, RETURN_BUTTON, "4", "Вернуть банку", tint=BLUE)
 
 
 def draw_pc_recovery(g):
@@ -213,7 +213,7 @@ def draw_pc_recovery(g):
     service_shell(g, g.append("ПК ", g.string(g.add(desk, 1))), status,
                   color_when(g, g.either(stopped, booting), TEAL, AMBER))
     for index, (label, box) in enumerate(zip(("Завершить игру", "Перезапустить лаунчер", "Запустить игру"), PC_BUTTONS), 1):
-        service_button(g, box, f"{index}   {label}", enabled=g.negate(booting))
+        service_button(g, box, str(index), label, enabled=g.negate(booting))
     hint = ""
     for index, label in ((END_GAME, "Сначала заверши зависшую игру."),
                          (RESTART_LAUNCHER, "Сначала перезапусти лаунчер."),

@@ -4,7 +4,7 @@ from typing import NamedTuple
 
 from blueprint_graph import ARRAY, SYSTEM
 from club_scene import (
-    AC_TAGS, ADMIN_START, BENCH_TAGS, CAMERA_TAG, DRINKS_TAG, PC_TAGS, RECEPTION_TAG,
+    AC_TAGS, ADMIN_START, BENCH_TAGS, CAMERA_TAG, DRINKS_SIDE_TAG, DRINKS_TAG, PC_DESK_TAGS, PC_TAGS, RECEPTION_TAG,
     SERVER_ALARM_TAGS, SERVER_LIGHT_TAGS, SERVER_TAG, SNACK_TAG, STOCK_TAG, STOCK_WORKTOP_TAG,
 )
 
@@ -21,12 +21,13 @@ NO_SLICE, HEATING, HOT, COLD = range(4)
 REQUEST_BUDGETS = {CRASH: (40, 30), ENERGY: (55, 45), PIZZA: (70, 60)}
 SCENE_STATIONS = (
     *((index, tag, 86.0, 84.0) for index, tag in enumerate(PC_TAGS)),
-    (RECEPTION, RECEPTION_TAG, 197.0, 78.0),
+    (RECEPTION, RECEPTION_TAG, 126.0, 66.0),
     (FRIDGE, DRINKS_TAG, 88.0, 67.0),
     (STOCK, STOCK_TAG, 80.0, 63.0),
     (STOCK, STOCK_WORKTOP_TAG, 58.0, 66.0),
     (SERVER, SERVER_TAG, 125.0, 76.0),
     (KITCHEN, SNACK_TAG, 112.0, 80.0),
+    (FRIDGE, DRINKS_SIDE_TAG, 74.0, 88.0),
 )
 CALM, NERVOUS = 1, 2
 LINE_SIZE = 2
@@ -109,6 +110,7 @@ def reset_shift(g):
     for array, size in [(name, DESKS) for name in DESK_ARRAYS] + [(name, LINE_SIZE) for name in LINE_ARRAYS]:
         g.resize(array, 0)
         g.resize(array, size)
+    g.call("ResetGuestModels")
     g.call("CloseRepair")
     g.call("ResetService")
     g.call("SyncServerAlarm")
@@ -173,6 +175,7 @@ def advance_queue(g):
         g.store(field, 0, g.arr(field, 1))
         g.store(field, 1, 0)
     g.set("Guest", 0)
+    g.call("AdvanceGuestModels")
 
 
 def count_queue(g):
@@ -181,6 +184,7 @@ def count_queue(g):
     g.guard(g.gt(remaining, 0))
     g.store("LineWait", slot, g.sub(remaining, 1))
     g.guard(g.eq(g.arr("LineWait", slot), 0))
+    g.call("LeaveGuestQueue", Slot=slot)
     g.call("LoseGuest")
     tail = g.branch(g.eq(slot, 0))
     g.call("AdvanceQueue")
@@ -201,6 +205,7 @@ def spawn_guest(g):
     slot = g.choose(g.eq(g.arr("LineMood", 0), 0), 0, 1)
     extra_wait = g.mul(upgrade_effect(g, BENCH), 10)
     g.store("LineWait", slot, g.add(g.choose(calm, 300, 240), extra_wait))
+    g.call("SpawnGuestModel", Slot=slot)
     g.store("LineMood", slot, g.choose(calm, CALM, NERVOUS))
     g.invoke("GameplayStatics.PlaySound2D", Sound=BELL_PATH + ".S_DoorBell",
              VolumeMultiplier=0.65, bIsUISound=True)
@@ -242,6 +247,7 @@ def wait_on_request(g):
     percent = ceil_div(g, remaining, units_per_percent)
     g.store("Patience", desk, min_int(g, 100, percent))
     g.guard(g.eq(remaining, 0))
+    g.call("LeaveGuestDesk", Desk=desk)
     g.store("DeskState", desk, g.choose(g.lt(g.get("ShiftNo"), SUPPLIES_NIGHT), FREE, BROKEN))
     g.call("LoseGuest")
 
@@ -286,6 +292,7 @@ def update_desk(g):
     g.call("WaitOnRequest", Desk=desk)
     g.resume(playing)
     new_task = g.branch(g.negate(g.lt(step, g.arr("Departure", desk))))
+    g.call("LeaveGuestDesk", Desk=desk)
     g.store("DeskState", desk, FREE)
     g.resume(new_task)
     g.guard(g.negate(g.lt(step, g.arr("NextRequest", desk))))
@@ -339,6 +346,7 @@ def seat_guest(g):
 def confirm_seat(g):
     g.guard(g.gt(g.get("Guest"), 0))
     g.call("SeatGuest", Desk=g.get("Desk"))
+    g.call("SeatGuestModel", Desk=g.get("Desk"))
     g.call("AdvanceQueue")
     g.set("Cash", g.add(g.get("Cash"), g.add(155, upgrade_effect(g, PAYMENT_TERMINAL))))
     g.set("Served", g.add(g.get("Served"), 1))
@@ -512,6 +520,23 @@ def cache_scene_station(g):
         g.store(member, slot, value)
 
 
+def cache_pc_status_anchors(g):
+    g.resize("PcStatusAnchors", DESKS)
+    for desk, tag in enumerate(PC_DESK_TAGS):
+        # Place the statuses on the outside of each row, away from the main aisle.
+        g.call("CachePcStatusAnchor", Desk=desk, Tag=tag, RowOffset=-150.0 if desk < 4 else 142.0)
+
+
+def cache_pc_status_anchor(g):
+    matches = tagged_actors(g, g.get("Tag"))
+    g.guard(g.gt(g.invoke(ARRAY + "Array_Length", result="ReturnValue", TargetArray=matches), 0))
+    desk = g.invoke(ARRAY + "Array_Get", result="Item", TargetArray=matches, Index=0)
+    location = g.invoke("Actor.K2_GetActorLocation", target=desk, result="ReturnValue")
+    x, y, z = g.invoke("KismetMathLibrary.BreakVector", result=("X", "Y", "Z"), InVec=location)
+    anchor = g.math("MakeVector", X=x, Y=g.add(y, g.get("RowOffset"), True), Z=g.add(z, 72.0, True))
+    g.store("PcStatusAnchors", g.get("Desk"), anchor)
+
+
 def check_scene_station(g):
     slot = g.get("Slot")
     rx, ry = g.arr("SceneRadiusX", slot), g.arr("SceneRadiusY", slot)
@@ -590,6 +615,7 @@ def handle_e(g):
 
 def player_tick(g):
     g.call("UpdateSceneAnimation")
+    g.call("UpdateGuestModels", FrameSeconds=g.get("FrameSeconds"))
     if_enter = g.key("Enter", just_pressed=True)
     playing = g.branch(g.eq(g.get("Phase"), 1))
     ordinary = g.branch(g.get("RepairOpen"))
@@ -636,6 +662,8 @@ def start_simulation(g):
              Time=0.1, bLooping=True)
     g.guard(g.get("Scene3D"))
     g.call("CacheSceneStations")
+    g.call("CachePcStatusAnchors")
+    g.call("CacheGuestAnchors")
     g.call("SyncServerAlarm")
 
 
@@ -656,6 +684,8 @@ RULE_GRAPHS = (
     ("CacheSceneStations", cache_scene_stations, ()),
     ("CacheSceneStation", cache_scene_station, (("Slot", "int"), ("Tag", "name"),
                                                 ("RadiusX", "real"), ("RadiusY", "real"))),
+    ("CachePcStatusAnchors", cache_pc_status_anchors, ()),
+    ("CachePcStatusAnchor", cache_pc_status_anchor, I + (("Tag", "name"), ("RowOffset", "real"))),
     ("CheckSceneStation", check_scene_station, (("Slot", "int"), ("Station", "int"),
                                                ("PlayerWorldX", "real"), ("PlayerWorldY", "real"))),
     ("SetSceneProp", set_scene_prop, (("Tag", "name"), ("Shown", "bool"))),
