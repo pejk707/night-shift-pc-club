@@ -48,6 +48,14 @@
 - В `BP_ClubHUD` за меню улучшений отвечают `DrawShop`, `ShopInput` и `BuyUpgrade`. Перенос уровней между сменами происходит в `ContinueGame`.
 - В `Tools/` находятся вспомогательные скрипты для сборки графов. Значения сложности для первых проверок заданы в `Tools/club_rules.py` и перенесены в узлы Blueprint.
 
+## Графические ассеты
+
+В каталоге ресурсов Unreal откройте `NightShift/Art`. Здесь лежат импортированные ассеты Kenney под лицензией CC0.
+
+- `UI/Widgets` и `UI/Keys` содержат панели, кнопки, шкалы и подсказки клавиш. [UI Pack — Sci-Fi](https://opengameart.org/node/25124), [Input Prompts](https://opengameart.org/content/input-prompts).
+- `Environment/Furniture` и `Environment/Structure` содержат мебель, технику и детали зала. [Furniture Kit](https://opengameart.org/content/furniture-kit), [Prototype Kit](https://opengameart.org/content/prototype-kit).
+- `Characters` содержит `SK_Admin` и шесть вариантов гостей. У каждого персонажа есть анимации ожидания, ходьбы, бега и сидения. У администратора также есть анимации взаимодействия и поза с предметом в руках. [Blocky Characters](https://opengameart.org/content/3d-rigged-characters).
+
 ## Референсы
 
 - **Overcooked!** — маршрут между станциями и несколько запросов с короткими сроками. [Team17](https://www.team17.com/games/overcooked)
